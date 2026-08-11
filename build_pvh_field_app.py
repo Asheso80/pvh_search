@@ -514,7 +514,7 @@ SHELL_HEAD = """<link rel="manifest" href="manifest.webmanifest">
 
 MANIFEST = """{"name":"PVH Field Lookup","short_name":"PVH","start_url":"./","scope":"./","display":"standalone","background_color":"#EFF2F6","theme_color":"#0A62C6","icons":[{"src":"icon-192.png","sizes":"192x192","type":"image/png"},{"src":"icon-512.png","sizes":"512x512","type":"image/png"}]}"""
 
-SW_JS = r"""const C="pvh-shell-v1";
+SW_JS = r"""const C="pvh-shell-__BUILD__";
 self.addEventListener("install",e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(["./","index.html","manifest.webmanifest","icon-192.png","icon-512.png"])).then(()=>self.skipWaiting()))});
 self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
 self.addEventListener("fetch",e=>{
@@ -549,7 +549,9 @@ def write_shell(payload_json):
                   .replace("__DATA_SCRIPT__", "")
                   .replace("__BOOT__", SHELL_BOOT))
     open("docs/index.html", "w", encoding="utf-8").write(shell_html)
-    open("docs/sw.js", "w", encoding="utf-8").write(SW_JS)
+    from datetime import datetime
+    open("docs/sw.js", "w", encoding="utf-8").write(
+        SW_JS.replace("__BUILD__", datetime.now().strftime("%Y%m%d%H%M%S")))
     open("docs/manifest.webmanifest", "w", encoding="utf-8").write(MANIFEST)
     make_icons("docs")
     open("PVH_data.json", "w", encoding="utf-8").write(payload_json)
@@ -753,7 +755,7 @@ O.forEach((o,i)=>{o._i=i;
   o._biz=lc(o["Business Name"]); o._lic=alnum(o["Licence Number"]);});
 
 function search(qRaw){
-  const q=qRaw.trim(); if(q.length<2) return null;
+  const q=qRaw.trim(); if(q.length<2 && !/^\d$/.test(q)) return null;
   const qa=alnum(q), ql=lc(q);
   const vres=[], ores=[];
   for(const v of V){
@@ -761,8 +763,8 @@ function search(qRaw){
     if(qa && v._deck && v._deck===qa) score=100;
     else if(qa && v._plate && (v._plate===qa?1:0)) score=95;
     else if(qa && v._plate && v._plate.startsWith(qa) && qa.length>=3) score=80;
-    else if(v._name.includes(ql)) score=60;
-    else if(v._biz.includes(ql)) score=50;
+    else if(ql.length>=2 && v._name.includes(ql)) score=60;
+    else if(ql.length>=2 && v._biz.includes(ql)) score=50;
     else if(qa && v._lic && v._lic===qa) score=90;
     else if(qa.length>=5 && v._vin && v._vin.includes(qa)) score=70;
     else if(qa && v._deck && v._deck.startsWith(qa) && qa.length<v._deck.length) score=40;
@@ -770,8 +772,8 @@ function search(qRaw){
   }
   for(const o of O){
     let score=-1;
-    if(o._name.includes(ql)) score=60;
-    else if(o._biz.includes(ql)) score=50;
+    if(ql.length>=2 && o._name.includes(ql)) score=60;
+    else if(ql.length>=2 && o._biz.includes(ql)) score=50;
     else if(qa && o._lic && o._lic===qa) score=90;
     if(score>=0) ores.push([score,o]);
   }

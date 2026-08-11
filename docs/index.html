@@ -197,7 +197,7 @@ O.forEach((o,i)=>{o._i=i;
   o._biz=lc(o["Business Name"]); o._lic=alnum(o["Licence Number"]);});
 
 function search(qRaw){
-  const q=qRaw.trim(); if(q.length<2) return null;
+  const q=qRaw.trim(); if(q.length<2 && !/^\d$/.test(q)) return null;
   const qa=alnum(q), ql=lc(q);
   const vres=[], ores=[];
   for(const v of V){
@@ -205,8 +205,8 @@ function search(qRaw){
     if(qa && v._deck && v._deck===qa) score=100;
     else if(qa && v._plate && (v._plate===qa?1:0)) score=95;
     else if(qa && v._plate && v._plate.startsWith(qa) && qa.length>=3) score=80;
-    else if(v._name.includes(ql)) score=60;
-    else if(v._biz.includes(ql)) score=50;
+    else if(ql.length>=2 && v._name.includes(ql)) score=60;
+    else if(ql.length>=2 && v._biz.includes(ql)) score=50;
     else if(qa && v._lic && v._lic===qa) score=90;
     else if(qa.length>=5 && v._vin && v._vin.includes(qa)) score=70;
     else if(qa && v._deck && v._deck.startsWith(qa) && qa.length<v._deck.length) score=40;
@@ -214,8 +214,8 @@ function search(qRaw){
   }
   for(const o of O){
     let score=-1;
-    if(o._name.includes(ql)) score=60;
-    else if(o._biz.includes(ql)) score=50;
+    if(ql.length>=2 && o._name.includes(ql)) score=60;
+    else if(ql.length>=2 && o._biz.includes(ql)) score=50;
     else if(qa && o._lic && o._lic===qa) score=90;
     if(score>=0) ores.push([score,o]);
   }
