@@ -142,23 +142,61 @@ main{flex:1;padding:10px 12px 40px}
   color:var(--text);line-height:1.5}
 .empty{color:var(--faint);font-size:13px;padding:8px 2px}
 a.tel{color:var(--accent);text-decoration:none}
-.fchips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;
-  -webkit-overflow-scrolling:touch;scrollbar-width:none}
-.fchips::-webkit-scrollbar{display:none}
-.fchip{flex:0 0 auto;border:1px solid var(--line);background:var(--panel);
-  color:var(--dim);border-radius:20px;padding:7px 13px;font-size:13px;
-  font-weight:600;cursor:pointer;white-space:nowrap}
+.fchips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 10px}
+.fchip{flex:0 1 auto;max-width:100%;border:1px solid var(--line);background:var(--panel);
+  color:var(--dim);border-radius:20px;padding:7px 13px;font-size:13px;line-height:1.2;
+  font-weight:600;cursor:pointer;white-space:normal;text-align:center;min-height:34px;
+  display:inline-flex;align-items:center;justify-content:center}
 .fchip.on{background:var(--accent);border-color:var(--accent);color:#fff}
-.browsebar{display:flex;gap:8px;margin-bottom:10px}
-.browsebar select{flex:1;height:42px;border:1px solid var(--line);border-radius:10px;
-  background:var(--panel);color:var(--text);font-size:14px;padding:0 10px;
-  -webkit-appearance:none;appearance:none}
+.browsebar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.browsebar select{flex:1 1 160px;min-width:0;height:42px;border:1px solid var(--line);
+  border-radius:10px;background:var(--panel);color:var(--text);font-size:14px;
+  padding:0 32px 0 10px;-webkit-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 2l5 5 5-5' fill='none' stroke='%2371808F' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 11px center;background-size:11px 7px}
 .cardbadges{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
 .cardbadges .badge{padding:3px 7px;font-size:11px}
 .copybtn{display:block;width:100%;padding:13px;border-radius:12px;
   border:1px solid var(--line);background:var(--panel);color:var(--accent);
   font-size:15px;font-weight:700;margin-bottom:10px;cursor:pointer}
 .copybtn:active{background:var(--panel2)}
+
+/* update banner + data-source form (PWA shell) */
+#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:60;
+  width:calc(100% - 24px);max-width:560px;background:var(--panel);
+  border:1px solid var(--accent);border-radius:12px;padding:12px 14px;
+  font-size:14px;line-height:1.45;color:var(--text);display:none;
+  box-shadow:0 8px 26px rgba(0,0,0,.35)}
+#toast .link{font-weight:700;white-space:nowrap}
+.dsinput{width:100%;height:46px;border:1px solid var(--line);border-radius:10px;
+  background:var(--panel);color:var(--text);font-size:15px;padding:0 12px;
+  margin-bottom:10px;outline:none}
+.dsinput:focus{border-color:var(--accent)}
+
+/* wide displays (tablet / desktop browser) */
+@media (min-width:720px){
+  #app{max-width:880px}
+  header{padding:12px 18px 10px}
+  main{padding:14px 18px 56px}
+  h1{font-size:16px}
+  .fchip{font-size:14px;padding:8px 15px}
+  .browsebar select{height:44px;font-size:15px}
+  .grid .k{flex:0 0 32%;max-width:250px;font-size:14px}
+  .card{padding:14px}
+}
+@media (min-width:1100px){
+  #app{max-width:1040px}
+}
+/* mouse / trackpad affordances */
+@media (hover:hover) and (pointer:fine){
+  .card:hover{background:var(--panel2)}
+  .fchip:hover{border-color:var(--accent);color:var(--text)}
+  .fchip.on:hover{color:#fff}
+  .navbtn:hover,.copybtn:hover{background:var(--panel2)}
+  .browsebar select:hover{border-color:var(--accent)}
+}
+.browsebar select:focus,.fchip:focus-visible,.copybtn:focus-visible,
+.card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </style>
 </head>
 <body>
@@ -303,7 +341,7 @@ function chkInto(out,soon,k,label,date){
 function vehFlagList(v,soon){
   const out=[];
   chkInto(out,soon,"mvi","MVI",addYear(v["First MVIDate"]));
-  chkInto(out,soon,"permit","Permit",v["NSVehicle Permit Expiry"]);
+  chkInto(out,soon,"permit","PVH License",v["NSVehicle Permit Expiry"]);
   chkInto(out,soon,"ins","Insurance",v["Insurance Expiry"]);
   chkInto(out,soon,"vlic","Veh licence",v["Expiry Date"]);
   return out;
@@ -318,7 +356,7 @@ function opFlagList(o,soon){
   chkInto(out,soon,"nsdl","NS DL",o["NSDLExpired Date"]);
   return out;
 }
-const FILTERS=[["all","All"],["permit","Permit"],["ins","Insurance"],["vlic","Veh licence"],
+const FILTERS=[["all","All"],["permit","PVH License"],["ins","Insurance"],["vlic","Veh licence"],
   ["mvi","MVI"],["olic","Op licence"],["nsdl","NS DL"],["inactive","Inactive"]];
 function buildFlagged(soon){
   const vi=[],oi=[];
@@ -376,7 +414,7 @@ function vehSummary(v){
     v["Owner Address"]?"Owner address: "+v["Owner Address"]:null,
     (v._op!=null&&(O[v._op]["Cell Phone"]||O[v._op]["Phone"]))?"Owner phone (op. record): "+(O[v._op]["Cell Phone"]||O[v._op]["Phone"]):null,
     "VIN: "+(v["VIN"]||"\u2014")+" \u00B7 Veh lic no: "+(v["Licence No"]||"\u2014"),
-    statusText("Permit",v["NSVehicle Permit Expiry"]),
+    statusText("PVH License",v["NSVehicle Permit Expiry"]),
     statusText("Insurance",v["Insurance Expiry"]),
     statusText("Veh licence",v["Expiry Date"]),
     statusText("MVI due",addYear(v["First MVIDate"])),
@@ -414,7 +452,7 @@ function recentCards(){
 }
 var HFILTER={type:"",stat:""};
 const TYPE_OPTS=[["","All types"],["Taxi","Taxi"],["Limo","Limo"],["Tour","Tour"],["Shuttle","Shuttle"]];
-const STAT_OPTS=[["","Any status"],["expired","Any expired"],["permit","Permit exp"],["ins","Insurance exp"],
+const STAT_OPTS=[["","Any status"],["expired","Any expired"],["permit","PVH License exp"],["ins","Insurance exp"],
   ["mvi","MVI overdue"],["vlic","Veh licence exp"],["ok","All valid"]];
 function vehMatchesStat(v,s){
   if(!s)return true;
@@ -446,14 +484,17 @@ function renderHome(q){
       (n?'<div class="card" onclick="go(\'flags\')">'+
         '<div class="opdot" style="color:var(--bad);border-color:var(--bad)">&#9888;</div>'+
         '<div class="cmain"><div class="cname">'+n+' flagged records</div>'+
-        '<div class="csub">Expired or missing: permits, insurance, licences, MVI \u00B7 inactive operators</div></div>'+
+        '<div class="csub">Expired or missing: PVH licences, insurance, vehicle licences, MVI \u00B7 inactive operators</div></div>'+
         '<div class="chev">&#8250;</div></div>':'')+
-      '<div class="fchips" style="margin-top:8px">'+shortcut("permit","Permits")+shortcut("ins","Insurance")+
+      '<div class="fchips" style="margin-top:8px">'+shortcut("permit","PVH Licenses")+shortcut("ins","Insurance")+
         shortcut("mvi","MVI")+shortcut("vlic","Veh lic")+'</div>'+
       recentCards()+
       '<div class="counts">'+DB.counts.vehicles+' active vehicles \u00B7 '+DB.counts.operators+' active operators</div>'+
       '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+'</div>'+
-      (window.__SHELL__?'<div class="hint"><span class="link" onclick="window.__reimport()">Import new data\u2026</span></div>':'');
+      (window.__SHELL__?'<div class="hint">'+(window.__syncLine?window.__syncLine():'')+
+        '<span class="link" onclick="window.__checkNow()">Check for new data</span> \u00B7 '+
+        '<span class="link" onclick="window.__datasrc()">Data source\u2026</span> \u00B7 '+
+        '<span class="link" onclick="window.__reimport()">Load a file\u2026</span></div>':'');
     wireFilters();
     return;
   }
@@ -535,7 +576,7 @@ function renderVehicle(i){
     ' \u00B7 <span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span></div>'+
     (v["Plate No"]?'<div class="bigplate tap" onclick="copyField(this,\''+esc(v["Plate No"]).replace(/'/g,"\\'")+'\')">'+esc(v["Plate No"])+'</div>':'')+
     '</div></div><div class="badges">'+
-    status("Permit",v["NSVehicle Permit Expiry"])+
+    status("PVH License",v["NSVehicle Permit Expiry"])+
     status("Insurance",v["Insurance Expiry"])+
     status("Veh licence",v["Expiry Date"])+
     status("MVI due",addYear(v["First MVIDate"]))+
@@ -626,17 +667,133 @@ q.addEventListener("input",()=>{
 });
 clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();renderHome("");});
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
+window.__route=route;
 window.addEventListener("hashchange",route);
 route();
 }
 window.__SHELL__=true;
 if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(function(){});}
+(function(){
+var DKEY="pvh_data", UKEY="pvh_data_url", CKEY="pvh_last_check", CHECK_MS=600000;
+function lsGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
+function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+function lsDel(k){try{localStorage.removeItem(k);}catch(e){}}
+function eh(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+  .replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function mainEl(){return document.getElementById("main");}
+
+/* A OneDrive share link points at a web page, not at the file. Personal links
+   (1drv.ms / onedrive.live.com) can be turned into a direct, CORS-enabled
+   download through the public shares endpoint. Work or school links
+   (*.sharepoint.com) just need download=1, but the tenant must allow another
+   site to read the file; if it does not, host the JSON elsewhere or keep
+   loading it by hand. */
+function directUrl(u){
+  u=(u||"").trim();
+  if(!u)return "";
+  if(/^https?:\/\/(1drv\.ms|(www\.)?onedrive\.live\.com)\//i.test(u)){
+    var b=btoa(unescape(encodeURIComponent(u))).replace(/=+$/,"").replace(/\//g,"_").replace(/\+/g,"-");
+    return "https://api.onedrive.com/v1.0/shares/u!"+b+"/root/content";
+  }
+  if(/sharepoint\.com\//i.test(u)&&!/[?&]download=1/i.test(u)){
+    return u+(u.indexOf("?")>-1?"&":"?")+"download=1";
+  }
+  return u;
+}
+function fetchData(u){
+  return fetch(directUrl(u),{cache:"no-store"}).then(function(r){
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    return r.text();
+  }).then(function(t){
+    var d=JSON.parse(t);
+    if(!d||!d.vehicles||!d.operators)throw new Error("not a PVH data file");
+    return {text:t,data:d};
+  });
+}
+function toast(html){
+  var el=document.getElementById("toast");
+  if(!el){el=document.createElement("div");el.id="toast";document.body.appendChild(el);}
+  el.innerHTML=html;el.style.display="block";
+}
+var CLOSE=' · <span class="link" onclick="window.__closeToast()">Close</span>';
+var PENDING=null;
+function builtNow(){try{return (JSON.parse(lsGet(DKEY)||"{}")).built||null;}catch(e){return null;}}
+function stampCheck(){lsSet(CKEY,new Date().toISOString());}
+function check(manual){
+  var u=lsGet(UKEY);
+  if(!u){
+    if(manual)toast('No data source saved yet. <span class="link" onclick="window.__datasrc()">Set one up</span>'+CLOSE);
+    return;
+  }
+  if(manual)toast("Checking the data source…");
+  fetchData(u).then(function(res){
+    stampCheck();
+    var cur=builtNow();
+    if(res.data.built&&cur&&res.data.built===cur){
+      if(manual)toast("Already up to date (data built "+eh(cur)+")."+CLOSE);
+      return;
+    }
+    PENDING=res;
+    toast("New data available (built "+eh(res.data.built||"?")+"). "+
+      '<span class="link" onclick="window.__applyUpdate()">Update now</span> · '+
+      '<span class="link" onclick="window.__closeToast()">Later</span>');
+  }).catch(function(e){
+    if(manual)toast("Could not read the data source: "+eh(e.message)+". "+
+      '<span class="link" onclick="window.__datasrc()">Check the link</span>'+CLOSE);
+  });
+}
+window.__closeToast=function(){var el=document.getElementById("toast");if(el)el.style.display="none";};
+window.__checkNow=function(){check(true);};
+window.__applyUpdate=function(){
+  if(!PENDING){window.__closeToast();return;}
+  lsSet(DKEY,PENDING.text);stampCheck();location.reload();
+};
+window.__syncLine=function(){
+  var u=lsGet(UKEY),c=lsGet(CKEY),s="";
+  if(!u)return "No automatic data source set — data changes only when you load a file.<br>";
+  if(c){try{s=" · last checked "+new Date(c).toLocaleString();}catch(e){}}
+  return "Auto-update on"+s+"<br>";
+};
+window.__datasrc=function(){
+  var cur=lsGet(UKEY)||"";
+  mainEl().innerHTML='<div class="seclabel">Automatic data source</div>'+
+    '<div class="notes">Put PVH_data.json in a OneDrive folder, copy its share link and paste it below. '+
+    'Every time the app opens it checks that link and offers the file whenever the build stamp changes. '+
+    'The link and the data are kept on this device only.\n\n'+
+    'In OneDrive use Share → Copy link. A personal 1drv.ms or onedrive.live.com link works as pasted. '+
+    'A work or school link (…sharepoint.com…) only works if the tenant lets another site read the file — '+
+    'if the check below fails with a network or CORS error, that is the reason.</div>'+
+    '<input id="dsurl" class="dsinput" type="url" inputmode="url" autocomplete="off" spellcheck="false" '+
+      'placeholder="https://… link to PVH_data.json" value="'+eh(cur)+'">'+
+    '<button class="copybtn" id="dssave">Save and check now</button>'+
+    (cur?'<button class="copybtn" id="dsclear" style="color:var(--bad)">Remove this link</button>':'')+
+    '<div class="stamp" id="dsmsg"></div>'+
+    '<div class="hint"><span class="link" onclick="window.__back()">Back</span> · '+
+      '<span class="link" onclick="window.__reimport()">Load a file instead…</span></div>';
+  var msg=document.getElementById("dsmsg");
+  document.getElementById("dssave").addEventListener("click",function(){
+    var u=document.getElementById("dsurl").value.trim();
+    if(!u){msg.textContent="Paste a link first.";return;}
+    msg.textContent="Checking…";
+    fetchData(u).then(function(res){
+      lsSet(UKEY,u);lsSet(DKEY,res.text);stampCheck();
+      msg.textContent="Saved. Loading data built "+(res.data.built||"?")+"…";
+      setTimeout(function(){location.reload();},600);
+    }).catch(function(e){
+      msg.textContent="Could not read that link: "+e.message+
+        " — it has to point straight at PVH_data.json, and the host has to allow this site to read it.";
+    });
+  });
+  var cb=document.getElementById("dsclear");
+  if(cb)cb.addEventListener("click",function(){lsDel(UKEY);lsDel(CKEY);window.__datasrc();});
+};
+window.__back=function(){if(window.__route)window.__route();else location.reload();};
 function showImport(msg){
-  var m=document.getElementById("main");
-  m.innerHTML='<div class="hint" style="padding-top:50px">'+(msg||"No data loaded on this device yet.")+'</div>'+
+  mainEl().innerHTML='<div class="hint" style="padding-top:50px">'+(msg||"No data loaded on this device yet.")+'</div>'+
     '<label class="copybtn" style="text-align:center;display:block">Load PVH_data.json'+
     '<input type="file" accept=".json,application/json" style="display:none" id="datafile"></label>'+
-    '<div class="stamp">Pick the PVH_data.json produced by the build script (OneDrive / Files).</div>';
+    '<div class="stamp">Pick the PVH_data.json produced by the build script (OneDrive / Files).</div>'+
+    '<div class="hint"><span class="link" onclick="window.__datasrc()">Or set up automatic updates from a OneDrive link…</span></div>';
   document.getElementById("datafile").addEventListener("change",function(ev){
     var f=ev.target.files[0]; if(!f)return;
     var r=new FileReader();
@@ -644,7 +801,7 @@ function showImport(msg){
       try{
         var d=JSON.parse(r.result);
         if(!d.vehicles||!d.operators)throw 0;
-        try{localStorage.setItem("pvh_data",r.result);}catch(e){}
+        lsSet(DKEY,r.result);
         boot(d);
       }catch(e){showImport("That file is not a valid PVH data file. Try again.");}
     };
@@ -652,15 +809,35 @@ function showImport(msg){
   });
 }
 window.__reimport=function(){showImport("Load the new PVH_data.json.");};
-(function(){
+function dueForCheck(){
+  if(!lsGet(UKEY))return false;
+  var c=lsGet(CKEY), t=c?Date.parse(c):NaN;
+  return isNaN(t)||(Date.now()-t)>CHECK_MS;
+}
+(function start(){
   document.body.classList.add("light");
-  var saved=null;
-  try{saved=localStorage.getItem("pvh_data");}catch(e){}
+  var saved=lsGet(DKEY), loaded=false;
   if(saved){
-    try{boot(JSON.parse(saved));return;}
-    catch(e){try{localStorage.removeItem("pvh_data");}catch(_){}}
+    try{boot(JSON.parse(saved));loaded=true;}
+    catch(e){lsDel(DKEY);}
   }
-  showImport();
+  if(loaded){
+    if(dueForCheck())check(false);
+  }else if(lsGet(UKEY)){
+    mainEl().innerHTML='<div class="hint" style="padding-top:50px">Loading data from the saved link…</div>';
+    fetchData(lsGet(UKEY)).then(function(res){
+      lsSet(DKEY,res.text);stampCheck();boot(res.data);
+    }).catch(function(e){
+      showImport("Could not load from the saved link ("+eh(e.message)+"). Load the file by hand, or "+
+        '<span class="link" onclick="window.__datasrc()">check the link</span>:');
+    });
+  }else{
+    showImport();
+  }
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState==="visible"&&dueForCheck())check(false);
+  });
+})();
 })();
 </script>
 </body>
