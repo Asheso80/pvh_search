@@ -485,30 +485,18 @@ function eh(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&
   .replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
 function mainEl(){return document.getElementById("main");}
 
-/* A OneDrive share link points at a web page, not at the file. Personal links
-   (1drv.ms / onedrive.live.com) can be turned into a direct, CORS-enabled
-   download through the public shares endpoint. Work or school links
-   (*.sharepoint.com) just need download=1, but the tenant must allow another
-   site to read the file; if it does not, host the JSON elsewhere or keep
-   loading it by hand. */
+/* A Dropbox share link opens a preview page, not the file. The download host
+   serves the bytes and allows other sites to read them; the rlkey parameter in
+   newer links is part of the credential and has to survive. Any other link is
+   used exactly as pasted, so a direct URL from any host still works. */
 function directUrl(u){
   u=(u||"").trim();
   if(!u)return "";
-  if(/^https?:\/\/(1drv\.ms|(www\.)?onedrive\.live\.com)\//i.test(u)){
-    var b=btoa(unescape(encodeURIComponent(u))).replace(/=+$/,"").replace(/\//g,"_").replace(/\+/g,"-");
-    return "https://api.onedrive.com/v1.0/shares/u!"+b+"/root/content";
-  }
-  /* A Dropbox share link opens a preview page, not the file. The download host
-     serves the bytes and allows other sites to read them; the rlkey parameter
-     in newer links is part of the credential and has to survive. */
   if(/^https?:\/\/(www\.)?dropbox\.com\//i.test(u)){
     var x=u.replace(/^https?:\/\/(www\.)?dropbox\.com/i,"https://dl.dropboxusercontent.com");
     if(/[?&]dl=0(&|$)/i.test(x))x=x.replace(/([?&])dl=0(&|$)/i,"$1dl=1$2");
     else if(!/[?&]dl=1(&|$)/i.test(x))x+=(x.indexOf("?")>-1?"&":"?")+"dl=1";
     return x;
-  }
-  if(/sharepoint\.com\//i.test(u)&&!/[?&]download=1/i.test(u)){
-    return u+(u.indexOf("?")>-1?"&":"?")+"download=1";
   }
   return u;
 }
@@ -516,7 +504,7 @@ function fetchData(u){
   return fetch(directUrl(u),{cache:"no-store"}).catch(function(){
     /* fetch only rejects outright for network-level failures, and for a link
        that resolves this almost always means the host refused to let this app
-       read it (CORS) - the case work OneDrive/SharePoint hits. */
+       read it (CORS), which is what a host that blocks other sites does. */
     throw new Error("the host would not let this app read the file (CORS), or the link is unreachable");
   }).then(function(r){
     if(!r.ok)throw new Error("HTTP "+r.status+(r.status===404?" - nothing at that link":
@@ -580,10 +568,10 @@ window.__datasrc=function(){
     '<div class="notes">Put PVH_data.json in cloud storage, copy its share link and paste it below. '+
     'Every time the app opens it checks that link and offers the file whenever the build stamp changes. '+
     'The link and the data are kept on this device only.\n\n'+
-    'Dropbox and personal OneDrive (1drv.ms / onedrive.live.com) links work as pasted — use Share → Copy link '+
-    'and paste the whole thing; this screen turns it into a direct file link for you.\n\n'+
-    'A work or school OneDrive link (…sharepoint.com…) will not work: those tenants block other sites from '+
-    'reading the file, and no version of the link gets around it.</div>'+
+    'In Dropbox use Share → Copy link and paste the whole thing exactly as copied — this screen turns it '+
+    'into a direct file link for you. A direct link from any other host works too.\n\n'+
+    'Keep overwriting that same file each build. Deleting it and uploading a new one gives it a new link, '+
+    'which quietly stops every device that was set up with the old one.</div>'+
     '<input id="dsurl" class="dsinput" type="url" inputmode="url" autocomplete="off" spellcheck="false" '+
       'placeholder="https://… link to PVH_data.json" value="'+eh(cur)+'">'+
     '<button class="copybtn" id="dssave">Save and check now</button>'+
@@ -612,8 +600,8 @@ function showImport(msg){
   mainEl().innerHTML='<div class="hint" style="padding-top:50px">'+(msg||"No data loaded on this device yet.")+'</div>'+
     '<label class="copybtn" style="text-align:center;display:block">Load PVH_data.json'+
     '<input type="file" accept=".json,application/json" style="display:none" id="datafile"></label>'+
-    '<div class="stamp">Pick the PVH_data.json produced by the build script (OneDrive / Files).</div>'+
-    '<div class="hint"><span class="link" onclick="window.__datasrc()">Or set up automatic updates from a OneDrive link…</span></div>';
+    '<div class="stamp">Pick the PVH_data.json produced by the build script (Dropbox / Files).</div>'+
+    '<div class="hint"><span class="link" onclick="window.__datasrc()">Or set up automatic updates from a Dropbox link…</span></div>';
   document.getElementById("datafile").addEventListener("change",function(ev){
     var f=ev.target.files[0]; if(!f)return;
     var r=new FileReader();
@@ -953,7 +941,7 @@ __DATA_SCRIPT__
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="2026-08-19.1";
+var APP_VERSION="2026-08-19.2";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators;
 document.getElementById("stamp").textContent =
