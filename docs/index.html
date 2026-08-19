@@ -695,18 +695,35 @@ function directUrl(u){
     var b=btoa(unescape(encodeURIComponent(u))).replace(/=+$/,"").replace(/\//g,"_").replace(/\+/g,"-");
     return "https://api.onedrive.com/v1.0/shares/u!"+b+"/root/content";
   }
+  /* A Dropbox share link opens a preview page, not the file. The download host
+     serves the bytes and allows other sites to read them; the rlkey parameter
+     in newer links is part of the credential and has to survive. */
+  if(/^https?:\/\/(www\.)?dropbox\.com\//i.test(u)){
+    var x=u.replace(/^https?:\/\/(www\.)?dropbox\.com/i,"https://dl.dropboxusercontent.com");
+    if(/[?&]dl=0(&|$)/i.test(x))x=x.replace(/([?&])dl=0(&|$)/i,"$1dl=1$2");
+    else if(!/[?&]dl=1(&|$)/i.test(x))x+=(x.indexOf("?")>-1?"&":"?")+"dl=1";
+    return x;
+  }
   if(/sharepoint\.com\//i.test(u)&&!/[?&]download=1/i.test(u)){
     return u+(u.indexOf("?")>-1?"&":"?")+"download=1";
   }
   return u;
 }
 function fetchData(u){
-  return fetch(directUrl(u),{cache:"no-store"}).then(function(r){
-    if(!r.ok)throw new Error("HTTP "+r.status);
+  return fetch(directUrl(u),{cache:"no-store"}).catch(function(){
+    /* fetch only rejects outright for network-level failures, and for a link
+       that resolves this almost always means the host refused to let this app
+       read it (CORS) - the case work OneDrive/SharePoint hits. */
+    throw new Error("the host would not let this app read the file (CORS), or the link is unreachable");
+  }).then(function(r){
+    if(!r.ok)throw new Error("HTTP "+r.status+(r.status===404?" - nothing at that link":
+      (r.status===401||r.status===403?" - the link needs a sign-in this app cannot do":"")));
     return r.text();
   }).then(function(t){
-    var d=JSON.parse(t);
-    if(!d||!d.vehicles||!d.operators)throw new Error("not a PVH data file");
+    var d;
+    try{d=JSON.parse(t);}
+    catch(e){throw new Error("that link gave back a web page, not PVH_data.json - it has to be the direct link to the file itself");}
+    if(!d||!d.vehicles||!d.operators)throw new Error("that file is not a PVH data file");
     return {text:t,data:d};
   });
 }
@@ -757,12 +774,13 @@ window.__syncLine=function(){
 window.__datasrc=function(){
   var cur=lsGet(UKEY)||"";
   mainEl().innerHTML='<div class="seclabel">Automatic data source</div>'+
-    '<div class="notes">Put PVH_data.json in a OneDrive folder, copy its share link and paste it below. '+
+    '<div class="notes">Put PVH_data.json in cloud storage, copy its share link and paste it below. '+
     'Every time the app opens it checks that link and offers the file whenever the build stamp changes. '+
     'The link and the data are kept on this device only.\n\n'+
-    'In OneDrive use Share → Copy link. A personal 1drv.ms or onedrive.live.com link works as pasted. '+
-    'A work or school link (…sharepoint.com…) only works if the tenant lets another site read the file — '+
-    'if the check below fails with a network or CORS error, that is the reason.</div>'+
+    'Dropbox and personal OneDrive (1drv.ms / onedrive.live.com) links work as pasted — use Share → Copy link '+
+    'and paste the whole thing; this screen turns it into a direct file link for you.\n\n'+
+    'A work or school OneDrive link (…sharepoint.com…) will not work: those tenants block other sites from '+
+    'reading the file, and no version of the link gets around it.</div>'+
     '<input id="dsurl" class="dsinput" type="url" inputmode="url" autocomplete="off" spellcheck="false" '+
       'placeholder="https://… link to PVH_data.json" value="'+eh(cur)+'">'+
     '<button class="copybtn" id="dssave">Save and check now</button>'+
@@ -780,8 +798,7 @@ window.__datasrc=function(){
       msg.textContent="Saved. Loading data built "+(res.data.built||"?")+"…";
       setTimeout(function(){location.reload();},600);
     }).catch(function(e){
-      msg.textContent="Could not read that link: "+e.message+
-        " — it has to point straight at PVH_data.json, and the host has to allow this site to read it.";
+      msg.textContent="Could not read that link: "+e.message+".";
     });
   });
   var cb=document.getElementById("dsclear");
