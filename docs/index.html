@@ -218,6 +218,9 @@ a.tel{color:var(--accent);text-decoration:none}
 
 <script>
 "use strict";
+/* Bumped whenever the app itself changes, so a phone can be checked against
+   what was deployed. Shown on the home screen under the data build stamp. */
+var APP_VERSION="2026-08-19.1";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators;
 document.getElementById("stamp").textContent =
@@ -490,7 +493,8 @@ function renderHome(q){
         shortcut("mvi","MVI")+shortcut("vlic","Veh lic")+'</div>'+
       recentCards()+
       '<div class="counts">'+DB.counts.vehicles+' active vehicles \u00B7 '+DB.counts.operators+' active operators</div>'+
-      '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+'</div>'+
+      '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+
+        '<br>App version '+APP_VERSION+'</div>'+
       (window.__SHELL__?'<div class="hint">'+(window.__syncLine?window.__syncLine():'')+
         '<span class="link" onclick="window.__checkNow()">Check for new data</span> \u00B7 '+
         '<span class="link" onclick="window.__datasrc()">Data source\u2026</span> \u00B7 '+
