@@ -4,6 +4,10 @@ PVH_Field_App.html
 PVH_data.json
 *.xlsx
 
+# Operations note — records where the data lives and how access works.
+# Kept outside the published repo on purpose.
+PVH_operations_note.md
+
 # Local Claude Code settings
 .claude/
 
