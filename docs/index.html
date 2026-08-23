@@ -229,7 +229,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="2026-08-22.1";
+var APP_VERSION="203bdc4a";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -531,7 +531,7 @@ function renderHome(q){
       (n?'<div class="card" onclick="go(\'flags\')">'+
         '<div class="opdot" style="color:var(--bad);border-color:var(--bad)">&#9888;</div>'+
         '<div class="cmain"><div class="cname">'+n+' flagged records</div>'+
-        '<div class="csub">Expired or missing: PVH licences, insurance, vehicle licences, MVI \u00B7 inactive operators</div></div>'+
+        '<div class="csub">Expired or missing: PVH licences, insurance, NS Permits, MVI \u00B7 inactive operators</div></div>'+
         '<div class="chev">&#8250;</div></div>':'')+
       '<div class="fchips" style="margin-top:8px">'+shortcut("permit","PVH Licenses")+shortcut("ins","Insurance")+
         shortcut("mvi","MVI")+shortcut("vlic","NS Permit")+'</div>'+

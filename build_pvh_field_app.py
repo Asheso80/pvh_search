@@ -23,6 +23,7 @@ No payment, refund, SAP or criminal-check fields are embedded.
 import re
 import sys
 import json
+import hashlib
 import datetime
 from collections import Counter
 import pandas as pd
@@ -354,7 +355,8 @@ def main():
     html = (TEMPLATE
             .replace("__HEAD_EXTRA__", "")
             .replace("__DATA_SCRIPT__", '<script id="data" type="application/json">' + payload + "</script>")
-            .replace("__BOOT__", SINGLE_BOOT))
+            .replace("__BOOT__", SINGLE_BOOT)
+            .replace("__APPVER__", shell_version()))
     with open(OUT_FILE, "w", encoding="utf-8") as f:
         f.write(html)
     kb = len(html.encode("utf-8")) // 1024
@@ -832,21 +834,50 @@ def make_icons(folder):
     return True
 
 
+_SHELL_VER = None
+
+
+def shell_version():
+    """Identify the app by the content of its own shell code, not by the clock.
+
+    A rebuild that changes no code produces the same version, so the daily run
+    leaves docs/ byte-identical -- nothing to commit, and installed phones are
+    never asked to re-download a shell they already have. Any real edit changes
+    it, which is what makes "is this device on the current build?" answerable by
+    reading one line off the screen.
+
+    Hashed before __APPVER__ is filled in, so the value is a fixed point rather
+    than something that depends on itself. Data is deliberately excluded: this
+    versions the app, not the records it loads.
+    """
+    global _SHELL_VER
+    if _SHELL_VER is None:
+        base = (TEMPLATE
+                .replace("__HEAD_EXTRA__", SHELL_HEAD)
+                .replace("__DATA_SCRIPT__", "")
+                .replace("__BOOT__", SHELL_BOOT))
+        _SHELL_VER = hashlib.sha256(base.encode("utf-8")).hexdigest()[:8]
+    return _SHELL_VER
+
+
 def write_shell(payload_json):
     import os
     os.makedirs("docs", exist_ok=True)
+    ver = shell_version()
     shell_html = (TEMPLATE
                   .replace("__HEAD_EXTRA__", SHELL_HEAD)
                   .replace("__DATA_SCRIPT__", "")
-                  .replace("__BOOT__", SHELL_BOOT))
+                  .replace("__BOOT__", SHELL_BOOT)
+                  .replace("__APPVER__", ver))
     open("docs/index.html", "w", encoding="utf-8").write(shell_html)
-    from datetime import datetime
-    open("docs/sw.js", "w", encoding="utf-8").write(
-        SW_JS.replace("__BUILD__", datetime.now().strftime("%Y%m%d%H%M%S")))
+    # Same version keys the service-worker cache, so the shell is re-fetched
+    # exactly when it actually changed.
+    open("docs/sw.js", "w", encoding="utf-8").write(SW_JS.replace("__BUILD__", ver))
     open("docs/manifest.webmanifest", "w", encoding="utf-8").write(MANIFEST)
     make_icons("docs")
     open("PVH_data.json", "w", encoding="utf-8").write(payload_json)
-    print("Shell written to docs/ (publish to GitHub Pages) | data written to PVH_data.json (do NOT commit)")
+    print(f"Shell written to docs/ | app version {ver} | "
+          f"data written to PVH_data.json (do NOT commit)")
 
 
 TEMPLATE = r"""<!DOCTYPE html>
@@ -1078,7 +1109,7 @@ __DATA_SCRIPT__
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="2026-08-22.1";
+var APP_VERSION="__APPVER__";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -1380,7 +1411,7 @@ function renderHome(q){
       (n?'<div class="card" onclick="go(\'flags\')">'+
         '<div class="opdot" style="color:var(--bad);border-color:var(--bad)">&#9888;</div>'+
         '<div class="cmain"><div class="cname">'+n+' flagged records</div>'+
-        '<div class="csub">Expired or missing: PVH licences, insurance, vehicle licences, MVI \u00B7 inactive operators</div></div>'+
+        '<div class="csub">Expired or missing: PVH licences, insurance, NS Permits, MVI \u00B7 inactive operators</div></div>'+
         '<div class="chev">&#8250;</div></div>':'')+
       '<div class="fchips" style="margin-top:8px">'+shortcut("permit","PVH Licenses")+shortcut("ins","Insurance")+
         shortcut("mvi","MVI")+shortcut("vlic","NS Permit")+'</div>'+
