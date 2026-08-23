@@ -497,7 +497,7 @@ def _veh_flags(v):
         f.add("MVI")
     for field, label in [("NSVehicle Permit Expiry", "PVH License"),
                          ("Insurance Expiry", "Insurance"),
-                         ("Expiry Date", "Veh licence")]:
+                         ("Expiry Date", "NS Permit")]:
         if _expired(v[field]):
             f.add(label)
     return f
@@ -1229,7 +1229,7 @@ function vehFlagList(v,soon){
   chkInto(out,soon,"mvi","MVI",addYear(v["First MVIDate"]));
   chkInto(out,soon,"permit","PVH License",v["NSVehicle Permit Expiry"]);
   chkInto(out,soon,"ins","Insurance",v["Insurance Expiry"]);
-  chkInto(out,soon,"vlic","Veh licence",v["Expiry Date"]);
+  chkInto(out,soon,"vlic","NS Permit",v["Expiry Date"]);
   return out;
 }
 function opFlagList(o,soon){
@@ -1242,7 +1242,7 @@ function opFlagList(o,soon){
   chkInto(out,soon,"nsdl","NS DL",o["NSDLExpired Date"]);
   return out;
 }
-const FILTERS=[["all","All"],["permit","PVH License"],["ins","Insurance"],["vlic","Veh licence"],
+const FILTERS=[["all","All"],["permit","PVH License"],["ins","Insurance"],["vlic","NS Permit"],
   ["mvi","MVI"],["olic","Op licence"],["nsdl","NS DL"],["inactive","Inactive"]];
 function buildFlagged(soon){
   const vi=[],oi=[];
@@ -1302,7 +1302,7 @@ function vehSummary(v){
     "VIN: "+(v["VIN"]||"\u2014")+" \u00B7 Veh lic no: "+(v["Licence No"]||"\u2014"),
     statusText("PVH License",v["NSVehicle Permit Expiry"]),
     statusText("Insurance",v["Insurance Expiry"]),
-    statusText("Veh licence",v["Expiry Date"]),
+    statusText("NS Permit",v["Expiry Date"]),
     statusText("MVI due",addYear(v["First MVIDate"])),
     "Data as of "+DB.built+" \u00B7 copied "+new Date().toLocaleString()].filter(x=>x!=null).join("\n");
 }
@@ -1349,7 +1349,7 @@ function recentCards(){
 var HFILTER={type:"",stat:""};
 const TYPE_OPTS=[["","All types"],["Taxi","Taxi"],["Limo","Limo"],["Tour","Tour"],["Shuttle","Shuttle"]];
 const STAT_OPTS=[["","Any status"],["expired","Any expired"],["permit","PVH License exp"],["ins","Insurance exp"],
-  ["mvi","MVI overdue"],["vlic","Veh licence exp"],["ok","All valid"]];
+  ["mvi","MVI overdue"],["vlic","NS Permit exp"],["ok","All valid"]];
 function vehMatchesStat(v,s){
   if(!s)return true;
   const fl=vehFlagList(v,false).filter(x=>!x.miss);
@@ -1383,7 +1383,7 @@ function renderHome(q){
         '<div class="csub">Expired or missing: PVH licences, insurance, vehicle licences, MVI \u00B7 inactive operators</div></div>'+
         '<div class="chev">&#8250;</div></div>':'')+
       '<div class="fchips" style="margin-top:8px">'+shortcut("permit","PVH Licenses")+shortcut("ins","Insurance")+
-        shortcut("mvi","MVI")+shortcut("vlic","Veh lic")+'</div>'+
+        shortcut("mvi","MVI")+shortcut("vlic","NS Permit")+'</div>'+
       recentCards()+
       '<div class="counts">'+DB.counts.vehicles+' active vehicles \u00B7 '+DB.counts.operators+' active operators \u00B7 '+(DB.counts.owners||0)+' owners</div>'+
       '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+
@@ -1475,7 +1475,7 @@ function renderVehicle(i){
     '</div></div><div class="badges">'+
     status("PVH License",v["NSVehicle Permit Expiry"])+
     status("Insurance",v["Insurance Expiry"])+
-    status("Veh licence",v["Expiry Date"])+
+    status("NS Permit",v["Expiry Date"])+
     status("MVI due",addYear(v["First MVIDate"]))+
     '</div></div>';
   h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
