@@ -13,3 +13,7 @@ PVH_operations_note.md
 
 # Python
 __pycache__/
+
+# Daemon runtime artifacts -- local scheduling state and build logs.
+daemon.lock
+logs/
