@@ -161,12 +161,15 @@ a.tel{color:var(--accent);text-decoration:none}
   font-size:15px;font-weight:700;margin-bottom:10px;cursor:pointer}
 .copybtn:active{background:var(--panel2)}
 
-/* update banner + data-source form (PWA shell) */
-#toast{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:60;
-  width:calc(100% - 24px);max-width:560px;background:var(--panel);
-  border:1px solid var(--accent);border-radius:12px;padding:12px 14px;
+/* update banner + data-source form (PWA shell)
+   In normal document flow right under the sticky header, not fixed/floating —
+   guarantees it can never sit under the header or overlap the search box,
+   and it's the first thing visible with no scroll, no position math. */
+#toast{margin:10px 16px 0;padding:12px 14px;background:var(--panel);
+  border:1px solid var(--accent);border-left:4px solid var(--accent);border-radius:10px;
   font-size:14px;line-height:1.45;color:var(--text);display:none;
-  box-shadow:0 8px 26px rgba(0,0,0,.35)}
+  box-shadow:0 4px 14px rgba(0,0,0,.18)}
+#toast.ok{border-color:var(--ok);border-left-color:var(--ok)}
 #toast .link{font-weight:700;white-space:nowrap}
 .dsinput{width:100%;height:46px;border:1px solid var(--line);border-radius:10px;
   background:var(--panel);color:var(--text);font-size:15px;padding:0 12px;
@@ -213,6 +216,7 @@ a.tel{color:var(--accent);text-decoration:none}
       <button id="clr">&#10005;</button>
     </div>
   </header>
+  <div id="toast" style="display:none"></div>
   <main id="main"></main>
 </div>
 
@@ -220,7 +224,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="2026-08-19.2";
+var APP_VERSION="2026-08-22.1";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators;
 document.getElementById("stamp").textContent =
@@ -678,7 +682,16 @@ route();
 window.__SHELL__=true;
 if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(function(){});}
 (function(){
-var DKEY="pvh_data", UKEY="pvh_data_url", CKEY="pvh_last_check", CHECK_MS=600000;
+var DKEY="pvh_data", UKEY="pvh_data_url", CKEY="pvh_last_check", CHECK_MS=600000, JKEY="pvh_just_updated";
+/* Flips true on the first tap or keystroke anywhere in the app — attached
+   at the document level so it doesn't depend on what boot() wires up, and
+   fires for a card tap, a settings link, typing in search, all of it.
+   A cold-start auto-update is only safe to apply without asking while this
+   is still false — see check("cold"). */
+var interacted=false;
+function markInteracted(){interacted=true;}
+document.addEventListener("pointerdown",markInteracted,{once:true,passive:true});
+document.addEventListener("keydown",markInteracted,{once:true});
 function lsGet(k){try{return localStorage.getItem(k);}catch(e){return null;}}
 function lsSet(k,v){try{localStorage.setItem(k,v);}catch(e){}}
 function lsDel(k){try{localStorage.removeItem(k);}catch(e){}}
@@ -719,16 +732,25 @@ function fetchData(u){
     return {text:t,data:d};
   });
 }
-function toast(html){
+function toast(html,variant){
   var el=document.getElementById("toast");
-  if(!el){el=document.createElement("div");el.id="toast";document.body.appendChild(el);}
+  el.className=variant==="ok"?"ok":"";
   el.innerHTML=html;el.style.display="block";
 }
 var CLOSE=' · <span class="link" onclick="window.__closeToast()">Close</span>';
 var PENDING=null;
 function builtNow(){try{return (JSON.parse(lsGet(DKEY)||"{}")).built||null;}catch(e){return null;}}
 function stampCheck(){lsSet(CKEY,new Date().toISOString());}
-function check(manual){
+/* Shared apply path for every route that swaps in new data: sets the data,
+   drops a one-shot marker with the build stamp so the NEXT load can show a
+   confirmation, then reloads. A reload is required either way (search index
+   and header listeners are rebuilt in boot(), which is not safe to re-run
+   into a live DOM) so this never tries to hot-swap in place. */
+function applyDataAndReload(res){
+  lsSet(DKEY,res.text);lsSet(JKEY,res.data.built||"");stampCheck();location.reload();
+}
+function check(mode){
+  var manual=mode==="manual";
   var u=lsGet(UKEY);
   if(!u){
     if(manual)toast('No data source saved yet. <span class="link" onclick="window.__datasrc()">Set one up</span>'+CLOSE);
@@ -742,6 +764,12 @@ function check(manual){
       if(manual)toast("Already up to date (data built "+eh(cur)+")."+CLOSE);
       return;
     }
+    /* Cold start, nothing tapped yet: apply straight away, no prompt — there
+       is no in-progress screen to lose. If the officer has already started
+       using the app by the time this resolves (dueForCheck ran, but the
+       fetch was slow), fall through to the same ask-first banner as a
+       mid-session recheck instead of reloading out from under them. */
+    if(mode==="cold"&&!interacted){applyDataAndReload(res);return;}
     PENDING=res;
     toast("New data available (built "+eh(res.data.built||"?")+"). "+
       '<span class="link" onclick="window.__applyUpdate()">Update now</span> · '+
@@ -752,10 +780,10 @@ function check(manual){
   });
 }
 window.__closeToast=function(){var el=document.getElementById("toast");if(el)el.style.display="none";};
-window.__checkNow=function(){check(true);};
+window.__checkNow=function(){check("manual");};
 window.__applyUpdate=function(){
   if(!PENDING){window.__closeToast();return;}
-  lsSet(DKEY,PENDING.text);stampCheck();location.reload();
+  applyDataAndReload(PENDING);
 };
 window.__syncLine=function(){
   var u=lsGet(UKEY),c=lsGet(CKEY),s="";
@@ -830,8 +858,10 @@ function dueForCheck(){
     try{boot(JSON.parse(saved));loaded=true;}
     catch(e){lsDel(DKEY);}
   }
+  var justUpdated=lsGet(JKEY);
+  if(justUpdated){lsDel(JKEY);toast("Data updated — built "+eh(justUpdated)+"."+CLOSE,"ok");}
   if(loaded){
-    if(dueForCheck())check(false);
+    if(dueForCheck())check("cold");
   }else if(lsGet(UKEY)){
     mainEl().innerHTML='<div class="hint" style="padding-top:50px">Loading data from the saved link…</div>';
     fetchData(lsGet(UKEY)).then(function(res){
@@ -844,7 +874,7 @@ function dueForCheck(){
     showImport();
   }
   document.addEventListener("visibilitychange",function(){
-    if(document.visibilityState==="visible"&&dueForCheck())check(false);
+    if(document.visibilityState==="visible"&&dueForCheck())check("mid");
   });
 })();
 })();
