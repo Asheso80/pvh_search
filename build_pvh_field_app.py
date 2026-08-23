@@ -356,7 +356,7 @@ def main():
             .replace("__HEAD_EXTRA__", "")
             .replace("__DATA_SCRIPT__", '<script id="data" type="application/json">' + payload + "</script>")
             .replace("__BOOT__", SINGLE_BOOT)
-            .replace("__APPVER__", shell_version()))
+            .replace("__APPVER__", shell_version()[0]))
     with open(OUT_FILE, "w", encoding="utf-8") as f:
         f.write(html)
     kb = len(html.encode("utf-8")) // 1024
@@ -834,49 +834,80 @@ def make_icons(folder):
     return True
 
 
+VERSION_FILE = "app_version.json"
 _SHELL_VER = None
 
 
 def shell_version():
-    """Identify the app by the content of its own shell code, not by the clock.
+    """Give the app a version worth reading, that still moves only on a real change.
 
-    A rebuild that changes no code produces the same version, so the daily run
-    leaves docs/ byte-identical -- nothing to commit, and installed phones are
-    never asked to re-download a shell they already have. Any real edit changes
-    it, which is what makes "is this device on the current build?" answerable by
-    reading one line off the screen.
+    Returns (label, digest): the label is what an officer sees and can say out
+    loud ("v3, shipped the 23rd"); the digest keys the service-worker cache.
 
-    Hashed before __APPVER__ is filled in, so the value is a fixed point rather
-    than something that depends on itself. Data is deliberately excluded: this
-    versions the app, not the records it loads.
+    The shell's own code is hashed, and app_version.json remembers which hash
+    the current number was issued for. An unchanged rebuild reuses the recorded
+    number and date verbatim, so the 07:30 run stays byte-identical and nobody
+    is asked to re-download a shell they already have. A real edit rolls the
+    number forward and stamps the day it shipped.
+
+    Hashed before __APPVER__ is substituted, so the value cannot depend on
+    itself. Records are excluded on purpose: this versions the app, not the data
+    it loads -- those are separate lines on screen because they answer separate
+    questions.
+
+    The ledger is committed deliberately. Without it a fresh clone would restart
+    at v1 and start reissuing numbers that already mean something else on the
+    handsets.
     """
     global _SHELL_VER
-    if _SHELL_VER is None:
-        base = (TEMPLATE
-                .replace("__HEAD_EXTRA__", SHELL_HEAD)
-                .replace("__DATA_SCRIPT__", "")
-                .replace("__BOOT__", SHELL_BOOT))
-        _SHELL_VER = hashlib.sha256(base.encode("utf-8")).hexdigest()[:8]
+    if _SHELL_VER is not None:
+        return _SHELL_VER
+    base = (TEMPLATE
+            .replace("__HEAD_EXTRA__", SHELL_HEAD)
+            .replace("__DATA_SCRIPT__", "")
+            .replace("__BOOT__", SHELL_BOOT))
+    digest = hashlib.sha256(base.encode("utf-8")).hexdigest()[:8]
+
+    try:
+        with open(VERSION_FILE, encoding="utf-8") as f:
+            rec = json.load(f)
+    except (OSError, ValueError):
+        # Missing or unreadable ledger starts the count rather than failing the
+        # build; a stale number is worse than an obviously fresh one.
+        rec = {}
+
+    if rec.get("hash") != digest:
+        rec = {"version": int(rec.get("version", 0)) + 1,
+               "date": datetime.date.today().isoformat(),
+               "hash": digest}
+        with open(VERSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(rec, f, indent=2)
+            f.write("\n")
+
+    _SHELL_VER = (f"v{rec['version']} · {rec['date']}", digest)
     return _SHELL_VER
 
 
 def write_shell(payload_json):
     import os
     os.makedirs("docs", exist_ok=True)
-    ver = shell_version()
+    label, _ = shell_version()
     shell_html = (TEMPLATE
                   .replace("__HEAD_EXTRA__", SHELL_HEAD)
                   .replace("__DATA_SCRIPT__", "")
                   .replace("__BOOT__", SHELL_BOOT)
-                  .replace("__APPVER__", ver))
+                  .replace("__APPVER__", label))
     open("docs/index.html", "w", encoding="utf-8").write(shell_html)
-    # Same version keys the service-worker cache, so the shell is re-fetched
-    # exactly when it actually changed.
-    open("docs/sw.js", "w", encoding="utf-8").write(SW_JS.replace("__BUILD__", ver))
+    # Key the cache on the bytes actually served, not on the pre-substitution
+    # digest: the version label is baked into this file, so a build that changes
+    # only the label still needs a new cache key. Deterministic either way --
+    # the label is settled before this is computed.
+    cache_key = hashlib.sha256(shell_html.encode("utf-8")).hexdigest()[:8]
+    open("docs/sw.js", "w", encoding="utf-8").write(SW_JS.replace("__BUILD__", cache_key))
     open("docs/manifest.webmanifest", "w", encoding="utf-8").write(MANIFEST)
     make_icons("docs")
     open("PVH_data.json", "w", encoding="utf-8").write(payload_json)
-    print(f"Shell written to docs/ | app version {ver} | "
+    print(f"Shell written to docs/ | app version {label} | "
           f"data written to PVH_data.json (do NOT commit)")
 
 
