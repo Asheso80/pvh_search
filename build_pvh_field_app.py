@@ -662,25 +662,49 @@ window.__syncLine=function(){
   if(c){try{s=" · last checked "+new Date(c).toLocaleString();}catch(e){}}
   return "Auto-update on"+s+"<br>";
 };
-window.__datasrc=function(){
+function srcHost(u){
+  var m=String(u).match(/^https?:\/\/([^\/?#]+)/i);
+  return m?m[1].replace(/^www\./i,""):"saved link";
+}
+function srcCode(u){
+  /* Short, non-secret fingerprint of the link. Lets two devices be compared
+     ("does yours show A3F9 as well?") without either screen ever putting the
+     URL itself in front of whoever is standing there. */
+  var h=5381;
+  for(var i=0;i<u.length;i++)h=((h<<5)+h+u.charCodeAt(i))>>>0;
+  return ("000"+h.toString(36).toUpperCase()).slice(-4);
+}
+window.__datasrc=function(replace){
   var cur=lsGet(UKEY)||"";
+  /* A saved link is never rendered back to the screen. This page was the one
+     place the URL sat in the clear, so anyone holding the handset could read
+     the whole dataset's share link off it. Replacing therefore means pasting a
+     fresh link rather than editing the old one -- the link's source of truth is
+     the build machine's config, not the phone. */
+  var editing=!cur||replace===true;
   mainEl().innerHTML='<div class="seclabel">Automatic data source</div>'+
-    '<div class="notes">Put PVH_data.json in cloud storage, copy its share link and paste it below. '+
-    'Every time the app opens it checks that link and offers the file whenever the build stamp changes. '+
-    'The link and the data are kept on this device only.\n\n'+
-    'In Dropbox use Share → Copy link and paste the whole thing exactly as copied — this screen turns it '+
-    'into a direct file link for you. A direct link from any other host works too.\n\n'+
-    'Keep overwriting that same file each build. Deleting it and uploading a new one gives it a new link, '+
-    'which quietly stops every device that was set up with the old one.</div>'+
-    '<input id="dsurl" class="dsinput" type="url" inputmode="url" autocomplete="off" spellcheck="false" '+
-      'placeholder="https://… link to PVH_data.json" value="'+eh(cur)+'">'+
-    '<button class="copybtn" id="dssave">Save and check now</button>'+
+    (editing
+      ? '<div class="notes">Put PVH_data.json in cloud storage, copy its share link and paste it below. '+
+        'Every time the app opens it checks that link and offers the file whenever the build stamp changes. '+
+        'The link and the data are kept on this device only.\n\n'+
+        'In Dropbox use Share → Copy link and paste the whole thing exactly as copied — this screen turns it '+
+        'into a direct file link for you. A direct link from any other host works too.\n\n'+
+        'Keep overwriting that same file each build. Deleting it and uploading a new one gives it a new link, '+
+        'which quietly stops every device that was set up with the old one.</div>'+
+        '<input id="dsurl" class="dsinput" type="url" inputmode="url" autocomplete="off" spellcheck="false" '+
+          'placeholder="https://… link to PVH_data.json" value="">'+
+        '<button class="copybtn" id="dssave">Save and check now</button>'
+      : '<div class="notes">This device already has a data source. The link is not shown here — '+
+        'if it needs to change, paste a fresh one and it replaces the old.</div>'+
+        '<div class="srccard">Source · '+eh(srcHost(cur))+'<br>Link code <span class="code">'+eh(srcCode(cur))+'</span></div>'+
+        '<button class="copybtn" id="dsedit">Replace this link</button>')+
     (cur?'<button class="copybtn" id="dsclear" style="color:var(--bad)">Remove this link</button>':'')+
     '<div class="stamp" id="dsmsg"></div>'+
     '<div class="hint"><span class="link" onclick="window.__back()">Back</span> · '+
       '<span class="link" onclick="window.__reimport()">Load a file instead…</span></div>';
   var msg=document.getElementById("dsmsg");
-  document.getElementById("dssave").addEventListener("click",function(){
+  var sv=document.getElementById("dssave");
+  if(sv)sv.addEventListener("click",function(){
     var u=document.getElementById("dsurl").value.trim();
     if(!u){msg.textContent="Paste a link first.";return;}
     msg.textContent="Checking…";
@@ -692,6 +716,8 @@ window.__datasrc=function(){
       msg.textContent="Could not read that link: "+e.message+".";
     });
   });
+  var eb=document.getElementById("dsedit");
+  if(eb)eb.addEventListener("click",function(){window.__datasrc(true);});
   var cb=document.getElementById("dsclear");
   if(cb)cb.addEventListener("click",function(){lsDel(UKEY);lsDel(CKEY);window.__datasrc();});
 };
@@ -998,6 +1024,11 @@ a.tel{color:var(--accent);text-decoration:none}
   background:var(--panel);color:var(--text);font-size:15px;padding:0 12px;
   margin-bottom:10px;outline:none}
 .dsinput:focus{border-color:var(--accent)}
+/* Stands in for the link input once a source is saved -- confirms a source is
+   set and which host it points at, without showing the link itself. */
+.srccard{border:1px solid var(--line);border-radius:10px;background:var(--panel);
+  color:var(--dim);font-size:14px;line-height:1.5;padding:12px 14px;margin-bottom:10px}
+.srccard .code{font-weight:700;color:var(--text);letter-spacing:.08em}
 
 /* wide displays (tablet / desktop browser) */
 @media (min-width:720px){
