@@ -24,6 +24,7 @@ import re
 import sys
 import json
 import datetime
+from collections import Counter
 import pandas as pd
 
 VEH_FILE = sys.argv[1] if len(sys.argv) > 1 else "All_Active_Vehicles.xlsx"
@@ -91,6 +92,7 @@ OP_DATES = ["NSDLExpired Date", "Approval Date", "Renewal Date"]
 
 DATE_WARNINGS = []
 DEDUP_LOG = []
+OWNER_NAME_DRIFT = []
 
 def load(path, marker, fields, date_cols):
     hdr = find_header_row(path, marker)
@@ -200,6 +202,73 @@ def dedupe_operators(operators):
     return result
 
 
+def build_owners(vehicles, op_by_name):
+    """Group vehicles into first-class Owner records.
+
+    Grouped primarily by Owner ID -- a fully-populated identity key on
+    every vehicle row, more reliable than the name-string matching used
+    elsewhere in this file as a display-only fallback. BUT Owner ID is not
+    always a clean 1:1 key: the source data has at least one confirmed
+    case of the same Owner ID reused across two unrelated people (Owner ID
+    1: "Colemon, Thomas", one Limo vehicle, vs "MacGillivary, Michael",
+    five Tour vehicles). A same-ID group is therefore split further by
+    normalized owner name so unrelated people never get merged onto one
+    Owner card; a split logs a warning, since a reused Owner ID is a real
+    source-data problem worth flagging, not cosmetic spelling drift.
+
+    Owner-to-Operator linkage reuses the SAME exact-match name index the
+    rest of the app already treats as reliable (op_by_name) -- it
+    deliberately does NOT use the fuzzy tier, so an "Owner-Operator" label
+    is never a guess. Mutates vehicles in place, setting v["_owner"].
+    """
+    id_groups = {}
+    for i, v in enumerate(vehicles):
+        oid = v.get("Owner ID")
+        if oid in (None, ""):
+            continue
+        id_groups.setdefault(oid, []).append(i)
+
+    def most_common(rows, field):
+        vals = [r.get(field) for r in rows if r.get(field) not in (None, "")]
+        return Counter(vals).most_common(1)[0][0] if vals else None
+
+    owners = []
+    for oid, idxs in id_groups.items():
+        by_identity = {}
+        for i in idxs:
+            v = vehicles[i]
+            key = norm_name(v.get("Owner Last Name"), v.get("Owner First Name")) or ("", str(i))
+            by_identity.setdefault(key, []).append(i)
+        if len(by_identity) > 1:
+            names = "; ".join(
+                f"{vehicles[sub[0]].get('Owner Last Name')}, {vehicles[sub[0]].get('Owner First Name')}"
+                for sub in by_identity.values()
+            )
+            OWNER_NAME_DRIFT.append(
+                f"Owner ID {oid} reused across different identities (kept separate): {names}"
+            )
+        for key, sub_idxs in by_identity.items():
+            rows = [vehicles[i] for i in sub_idxs]
+            last = most_common(rows, "Owner Last Name")
+            first = most_common(rows, "Owner First Name")
+            nkey = norm_name(last, first)
+            owners.append({
+                "Owner ID": oid,
+                "Owner Last Name": last,
+                "Owner First Name": first,
+                "Business Name": most_common(rows, "Business Name"),
+                "Owner Address": most_common(rows, "Owner Address"),
+                "_veh": sub_idxs,
+                "_op": op_by_name.get(nkey) if nkey else None,
+            })
+    owners.sort(key=lambda o: (o["Owner Last Name"] or "", o["Owner First Name"] or ""))
+    for i, o in enumerate(owners):
+        o["_i"] = i
+        for ix in o["_veh"]:
+            vehicles[ix]["_owner"] = i
+    return owners
+
+
 def lev1(a, b):
     """True if edit distance between a and b is <= 1."""
     if a == b:
@@ -261,15 +330,22 @@ def main():
                     fz.extend(veh_by_name[ok])
         op["_vfz"] = [i for i in fz if i not in op["_veh"]][:6]
 
-    quality_report(vehicles, operators)
+    owners = build_owners(vehicles, op_by_name)
+
+    quality_report(vehicles, operators, owners)
     diff_report(OUT_FILE, vehicles, operators)
 
     data = {
         "built": datetime.datetime.now().strftime("%b %d, %Y %H:%M"),
-        "sources": {"vehicles": VEH_FILE.split("/")[-1], "operators": OP_FILE.split("/")[-1]},
-        "counts": {"vehicles": len(vehicles), "operators": len(operators)},
+        "sources": {
+            "vehicles": VEH_FILE.split("/")[-1],
+            "operators": OP_FILE.split("/")[-1],
+            "owners": "derived from Owner ID in " + VEH_FILE.split("/")[-1],
+        },
+        "counts": {"vehicles": len(vehicles), "operators": len(operators), "owners": len(owners)},
         "vehicles": vehicles,
         "operators": operators,
+        "owners": owners,
     }
     payload_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     # Escape "</" so the JSON can never terminate the script tag.
@@ -283,7 +359,7 @@ def main():
         f.write(html)
     kb = len(html.encode("utf-8")) // 1024
     addr_src = ADDR_FILE.split("/")[-1] if ADDR_FILE else "none (owner addresses skipped)"
-    print(f"Built {OUT_FILE} ({kb} KB) | vehicles: {len(vehicles)} | operators: {len(operators)}")
+    print(f"Built {OUT_FILE} ({kb} KB) | vehicles: {len(vehicles)} | operators: {len(operators)} | owners: {len(owners)}")
     print(f"Sources: {VEH_FILE.split('/')[-1]} + {OP_FILE.split('/')[-1]} + {addr_src}")
     write_shell(payload_json)
 
@@ -349,8 +425,8 @@ def merge_addresses(vehicles):
           + ("" if matched == len(vehicles) else " (rest have no address on file)"))
 
 
-def quality_report(vehicles, operators):
-    warn = list(DATE_WARNINGS)
+def quality_report(vehicles, operators, owners=None):
+    warn = list(DATE_WARNINGS) + list(OWNER_NAME_DRIFT)
     decks, plates = {}, {}
     for v in vehicles:
         d, p = v["Deck No"], v["Plate No"]
@@ -739,9 +815,10 @@ __DATA_SCRIPT__
 <script>
 "use strict";
 function boot(DB){
-const V = DB.vehicles, O = DB.operators;
+const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
-  "Data: " + DB.built + " \u00B7 " + DB.counts.vehicles + " vehicles \u00B7 " + DB.counts.operators + " operators";
+  "Data: " + DB.built + " \u00B7 " + DB.counts.vehicles + " vehicles \u00B7 " + DB.counts.operators +
+  " operators \u00B7 " + (DB.counts.owners||0) + " owners";
 
 /* ---------- search index ---------- */
 const alnum = s => (s||"").toString().toUpperCase().replace(/[^A-Z0-9]/g,"");
@@ -753,11 +830,14 @@ V.forEach((v,i)=>{v._i=i;
 O.forEach((o,i)=>{o._i=i;
   o._name=lc(o["Last Name"])+" "+lc(o["First Name"])+" "+lc(o["Middle"]);
   o._biz=lc(o["Business Name"]); o._lic=alnum(o["Licence Number"]);});
+W.forEach((w,i)=>{w._i=i;
+  w._name=lc(w["Owner Last Name"])+" "+lc(w["Owner First Name"]);
+  w._biz=lc(w["Business Name"]);});
 
 function search(qRaw){
   const q=qRaw.trim(); if(q.length<2 && !/^\d$/.test(q)) return null;
   const qa=alnum(q), ql=lc(q);
-  const vres=[], ores=[];
+  const vres=[], ores=[], wres=[];
   for(const v of V){
     let score=-1;
     if(qa && v._deck && v._deck===qa) score=100;
@@ -777,8 +857,14 @@ function search(qRaw){
     else if(qa && o._lic && o._lic===qa) score=90;
     if(score>=0) ores.push([score,o]);
   }
-  vres.sort((a,b)=>b[0]-a[0]); ores.sort((a,b)=>b[0]-a[0]);
-  return {v:vres.map(x=>x[1]).slice(0,60), o:ores.map(x=>x[1]).slice(0,60)};
+  for(const w of W){
+    let score=-1;
+    if(ql.length>=2 && w._name.includes(ql)) score=60;
+    else if(ql.length>=2 && w._biz.includes(ql)) score=50;
+    if(score>=0) wres.push([score,w]);
+  }
+  vres.sort((a,b)=>b[0]-a[0]); ores.sort((a,b)=>b[0]-a[0]); wres.sort((a,b)=>b[0]-a[0]);
+  return {v:vres.map(x=>x[1]).slice(0,60), o:ores.map(x=>x[1]).slice(0,60), w:wres.map(x=>x[1]).slice(0,60)};
 }
 
 /* ---------- date status ---------- */
@@ -827,13 +913,28 @@ function vehCard(v,extra){
 function opCard(o,extra){
   const init=((o["First Name"]||" ")[0]+(o["Last Name"]||" ")[0]).toUpperCase();
   const flag=(o["In Active"]===true||o["Cancelled"]===true);
+  const ownop=(o._veh&&o._veh.length>0);
   return '<div class="card" onclick="go(\'o/'+o._i+'\')">'+
     '<div class="opdot">'+esc(init)+'</div>'+
     '<div class="cmain"><div class="cname">'+esc(opName(o))+'</div>'+
     '<div class="csub">'+dash(o["Business Name"])+'</div>'+
     '<div class="crow2"><span class="chip t-'+esc(o["Operator Type"])+'">'+esc(o["Operator Type"])+' operator</span>'+
     (o["Licence Number"]?'<span class="plate">'+esc(o["Licence Number"])+'</span>':'')+
+    (ownop?'<span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
     (flag?'<span class="badge b-bad">INACTIVE/CANCELLED</span>':'')+
+    '</div>'+(extra||'')+'</div><div class="chev">&#8250;</div></div>';
+}
+function ownerCard(w,extra){
+  const init=((w["Owner First Name"]||" ")[0]+(w["Owner Last Name"]||" ")[0]).toUpperCase();
+  const ownop=(w._op!=null);
+  const n=(w._veh||[]).length;
+  return '<div class="card" onclick="go(\'w/'+w._i+'\')">'+
+    '<div class="opdot">'+esc(init)+'</div>'+
+    '<div class="cmain"><div class="cname">'+esc(ownerName(w))+'</div>'+
+    '<div class="csub">'+dash(w["Business Name"])+'</div>'+
+    '<div class="crow2"><span class="chip" style="background:var(--panel2);color:var(--dim)">OWNER</span>'+
+    '<span class="chip" style="background:var(--panel2);color:var(--dim)">'+n+' vehicle'+(n===1?"":"s")+'</span>'+
+    (ownop?'<span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
     '</div>'+(extra||'')+'</div><div class="chev">&#8250;</div></div>';
 }
 
@@ -951,8 +1052,18 @@ function opSummary(o){
       statusText("Op licence",o["Renewal Date"])+"\n"+statusText("NS DL",o["NSDLExpired Date"]),
     "Data as of "+DB.built+" \u00B7 copied "+new Date().toLocaleString()].join("\n");
 }
+function ownerSummary(w){
+  const op=(w._op!=null)?O[w._op]:null;
+  return ["PVH OWNER — "+ownerName(w),
+    "Business: "+(w["Business Name"]||"—"),
+    "Owner ID: "+(w["Owner ID"]==null?"—":w["Owner ID"]),
+    "Address: "+(w["Owner Address"]||"—"),
+    "Vehicles: "+(w._veh||[]).length,
+    op?("OWNER-OPERATOR — also licensed as "+opName(op)):"Not separately licensed as an operator",
+    "Data as of "+DB.built+" · copied "+new Date().toLocaleString()].join("\n");
+}
 function copyRec(kind,i,btn){
-  const t=kind==="v"?vehSummary(V[i]):opSummary(O[i]);
+  const t=kind==="v"?vehSummary(V[i]):(kind==="w"?ownerSummary(W[i]):opSummary(O[i]));
   const done=()=>{btn.textContent="Copied";setTimeout(()=>{btn.textContent="Copy record summary";},1200);};
   const fallback=()=>{
     const ta=document.createElement("textarea");ta.value=t;ta.style.position="fixed";ta.style.opacity="0";
@@ -967,7 +1078,7 @@ function recentCards(){
   if(!RECENT.length)return "";
   return '<div class="seclabel">Recent</div>'+RECENT.map(id=>{
     const p=id.split("/");
-    return p[0]==="v"?vehCard(V[+p[1]]):opCard(O[+p[1]]);
+    return p[0]==="v"?vehCard(V[+p[1]]):(p[0]==="w"?ownerCard(W[+p[1]]):opCard(O[+p[1]]));
   }).join("");
 }
 var HFILTER={type:"",stat:""};
@@ -1009,16 +1120,17 @@ function renderHome(q){
       '<div class="fchips" style="margin-top:8px">'+shortcut("permit","Permits")+shortcut("ins","Insurance")+
         shortcut("mvi","MVI")+shortcut("vlic","Veh lic")+'</div>'+
       recentCards()+
-      '<div class="counts">'+DB.counts.vehicles+' active vehicles \u00B7 '+DB.counts.operators+' active operators</div>'+
+      '<div class="counts">'+DB.counts.vehicles+' active vehicles \u00B7 '+DB.counts.operators+' active operators \u00B7 '+(DB.counts.owners||0)+' owners</div>'+
       '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+'</div>'+
       (window.__SHELL__?'<div class="hint"><span class="link" onclick="window.__reimport()">Import new data\u2026</span></div>':'');
     wireFilters();
     return;
   }
-  let h='<div class="counts">'+r.v.length+' vehicle'+(r.v.length===1?"":"s")+', '+r.o.length+' operator'+(r.o.length===1?"":"s")+'</div>';
+  let h='<div class="counts">'+r.v.length+' vehicle'+(r.v.length===1?"":"s")+', '+r.o.length+' operator'+(r.o.length===1?"":"s")+', '+r.w.length+' owner'+(r.w.length===1?"":"s")+'</div>';
   if(r.v.length){h+='<div class="seclabel">Vehicles ('+r.v.length+')</div>'+r.v.map(v=>vehCard(v)).join("");}
+  if(r.w.length){h+='<div class="seclabel">Owners ('+r.w.length+')</div>'+r.w.map(w=>ownerCard(w)).join("");}
   if(r.o.length){h+='<div class="seclabel">Operators ('+r.o.length+')</div>'+r.o.map(o=>opCard(o)).join("");}
-  if(!r.v.length&&!r.o.length){
+  if(!r.v.length&&!r.o.length&&!r.w.length){
     // U4: absence-as-signal
     const aq=alnum(q); const looksPlate=aq.length>=2&&aq.length<=8&&/[0-9]/.test(aq)&&/^[A-Z0-9]+$/.test(aq);
     h='<div class="alertbar" style="background:rgba(245,190,74,.14);color:var(--warn);border-color:rgba(245,190,74,.4)">'+
@@ -1083,9 +1195,8 @@ function telLink(p){
 function renderVehicle(i){
   const v=V[i]; if(!v){renderHome("");return;}
   noteRecent("v/"+i);
-  const key=(v["Owner Last Name"]||"").toUpperCase().trim()+"|"+(v["Owner First Name"]||"").toUpperCase().trim();
-  const others=V.filter(x=>x!==v &&
-    ((x["Owner Last Name"]||"").toUpperCase().trim()+"|"+(x["Owner First Name"]||"").toUpperCase().trim())===key && key!=="|");
+  const owner=(v._owner!=null)?W[v._owner]:null;
+  const others=owner?(owner._veh||[]).map(ix=>V[ix]).filter(x=>x!==v):[];
   const op=(v._op!=null)?O[v._op]:null;
   let h='<div class="dhead"><div class="dtop">'+deckHTML(v,true)+
     '<div><div class="dtitle">'+esc(v["Make Model"]||"Vehicle")+'</div>'+
@@ -1100,7 +1211,8 @@ function renderVehicle(i){
     '</div></div>';
   h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
-    row("Owner",op?('<span class="link" onclick="go(\'o/'+op._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
+    row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
+    (owner&&owner._op!=null?row("Owner-Operator",'<span class="link" onclick="go(\'o/'+owner._op+'\')">'+esc(opName(O[owner._op]))+' &#8250;</span>'):"")+
     (op&&(op["Cell Phone"]||op["Phone"])?row("Owner phone (op. record)",telLink(op["Cell Phone"]||op["Phone"])):"")+
     row("Business",dash(v["Business Name"]))+
     (v["Owner Address"]?row("Owner address",esc(v["Owner Address"])):"")+
@@ -1124,7 +1236,10 @@ function renderOperator(i){
   const o=O[i]; if(!o){renderHome("");return;}
   noteRecent("o/"+i);
   const flag=(o["In Active"]===true||o["Cancelled"]===true);
+  const ownedW=W.filter(w=>w._op===i);
   let h="";
+  if(ownedW.length) h+='<div class="alertbar" style="background:rgba(95,174,255,.14);color:var(--accent);border-color:rgba(95,174,255,.4)">'+
+    '&#9733; OWNER-OPERATOR &mdash; also registered as vehicle owner</div>';
   if(flag) h+='<div class="alertbar">&#9888; Licence flagged '+
     (o["Cancelled"]===true?'CANCELLED':'INACTIVE')+' in system</div>';
   h+='<div class="dhead"><div class="dtop"><div class="opdot" style="flex:0 0 66px;height:66px;font-size:22px">'+
@@ -1159,16 +1274,40 @@ function renderOperator(i){
   main.innerHTML=h;
 }
 
+function renderOwner(i){
+  const w=W[i]; if(!w){renderHome("");return;}
+  noteRecent("w/"+i);
+  const op=(w._op!=null)?O[w._op]:null;
+  let h='<div class="dhead"><div class="dtop">'+
+    '<div class="opdot" style="flex:0 0 66px;height:66px;font-size:22px">'+
+    esc(((w["Owner First Name"]||" ")[0]+(w["Owner Last Name"]||" ")[0]).toUpperCase())+'</div>'+
+    '<div><div class="dtitle">'+esc(ownerName(w))+'</div>'+
+    '<div class="dsub">'+dash(w["Business Name"])+' &middot; <span class="chip" style="background:var(--panel2);color:var(--dim)">OWNER</span>'+
+    (op?' <span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
+    '</div></div></div></div>';
+  h+='<button class="copybtn" onclick="copyRec(\'w\','+i+',this)">Copy record summary</button>';
+  h+='<div class="grid">'+
+    row("Owner ID",dash(w["Owner ID"]))+
+    row("Address",dash(w["Owner Address"]))+
+    (op?row("Operator link",'<span class="link" onclick="go(\'o/'+op._i+'\')">'+esc(opName(op))+' &#8250;</span>'):
+       row("Operator link",'<span class="empty">Not separately licensed as an operator</span>'))+
+    '</div>';
+  const veh=(w._veh||[]).map(ix=>V[ix]).filter(Boolean);
+  h+='<div class="seclabel">Vehicles ('+veh.length+')</div>';
+  h+=veh.length?veh.map(v=>vehCard(v)).join(""):'<div class="empty">No active vehicles on file for this owner.</div>';
+  main.innerHTML=h;
+}
+
 /* ---------- routing ---------- */
 const q=document.getElementById("q"), clr=document.getElementById("clr");
 function go(route){location.hash="#/"+route;}
 function route(){
   const h=location.hash.replace(/^#\/?/,"");
-  const m=/^(v|o)\/(\d+)$/.exec(h);
+  const m=/^(v|o|w)\/(\d+)$/.exec(h);
   const fm=/^flags(?:\/([a-z]+))?(\/soon)?$/.exec(h);
   window.scrollTo(0,0);
   document.getElementById("back").style.display=(m||fm)?"flex":"none";
-  if(m){ if(m[1]==="v") renderVehicle(+m[2]); else renderOperator(+m[2]); }
+  if(m){ if(m[1]==="v") renderVehicle(+m[2]); else if(m[1]==="o") renderOperator(+m[2]); else renderOwner(+m[2]); }
   else if(fm){ renderFlags(fm[1],!!fm[2]); }
   else { renderHome(q.value); }
 }
