@@ -1021,6 +1021,8 @@ main{flex:1;padding:10px 12px 40px}
 .t-Taxi{background:rgba(245,185,66,.14);color:var(--taxi)}
 .t-Limo{background:rgba(176,140,255,.14);color:var(--limo)}
 .t-Tour{background:rgba(77,163,255,.14);color:var(--tour)}
+.clchk{background:rgba(95,174,255,.16);color:var(--accent)}
+.clseen{background:var(--panel2);color:var(--faint)}
 .t-Shuttle{background:rgba(63,203,126,.14);color:var(--shuttle)}
 .chev{color:var(--faint);font-size:18px}
 
@@ -1248,6 +1250,112 @@ function vehCard(v,extra){
     (v["Plate No"]?'<span class="plate">'+esc(v["Plate No"])+'</span>':'')+
     '</div>'+(extra||'')+'</div><div class="chev">&#8250;</div></div>';
 }
+/* Check history -- a rolling, per-device record of when a driver was last
+   looked at, and when one was last deliberately marked as checked. The point
+   is to stop the same people being pulled over twice in a week by different
+   patrols.
+
+   Two things it deliberately does. It lives in its own localStorage key, so
+   the daily refresh -- which replaces pvh_data wholesale -- leaves it alone.
+   And it keys on the normalized Master Number rather than the array index the
+   routes use, because those indices shift on every rebuild. The normalizer
+   mirrors norm_master() in the builder so an entry survives the same prefix
+   and spacing noise the operator dedup already absorbs.
+
+   Per-device only. Nothing syncs; another officer's checks are not visible
+   here, and clearing the browser's storage loses it. */
+var CLOG_KEY="pvh_check_log", CLOG_DAYS=180, CLOG_MAX=900, CLOG=null;
+function clKey(o){
+  var s=String(o["Master Number"]==null?"":o["Master Number"]).trim().toUpperCase();
+  s=s.replace(/^4A\b/,"").replace(/^0*4\s+/,"").replace(/\s+/g,"");
+  return s||("#"+(o["ID"]==null?"?":o["ID"]));
+}
+function clLoad(){
+  if(CLOG)return CLOG;
+  try{
+    var r=localStorage.getItem(CLOG_KEY), o=r?JSON.parse(r):{};
+    CLOG=(o&&typeof o==="object"&&!Array.isArray(o))?o:{};
+  }catch(e){CLOG={};}
+  return CLOG;
+}
+/* Entries are [lastSeen, lastChecked] in epoch seconds, 0 for never. Pruned
+   on every write so the log cannot grow without bound on a handset. */
+function clSave(){
+  var m=clLoad(), cut=Math.floor(Date.now()/1000)-CLOG_DAYS*86400;
+  Object.keys(m).forEach(function(k){
+    var e=m[k];
+    if(!e||Math.max(e[0]||0,e[1]||0)<cut)delete m[k];
+  });
+  var ks=Object.keys(m);
+  if(ks.length>CLOG_MAX){
+    ks.sort(function(a,b){return Math.max(m[b][0]||0,m[b][1]||0)-Math.max(m[a][0]||0,m[a][1]||0);});
+    ks.slice(CLOG_MAX).forEach(function(k){delete m[k];});
+  }
+  try{localStorage.setItem(CLOG_KEY,JSON.stringify(m));}catch(e){}
+}
+function clGet(o){
+  var e=clLoad()[clKey(o)];
+  return {seen:(e&&e[0])||0, checked:(e&&e[1])||0};
+}
+function clMark(o,deliberate){
+  var m=clLoad(), k=clKey(o), e=m[k]||[0,0];
+  e[deliberate?1:0]=Math.floor(Date.now()/1000);
+  m[k]=e; clSave();
+}
+function clDays(ts){return Math.floor((Date.now()/1000-ts)/86400);}
+function clAgo(ts){
+  if(!ts)return "";
+  var d=clDays(ts);
+  if(d<=0)return "today";
+  if(d===1)return "yesterday";
+  if(d<7)return d+" days ago";
+  if(d<14)return "last week";
+  if(d<60)return Math.round(d/7)+" weeks ago";
+  return Math.round(d/30)+" months ago";
+}
+function clShort(ts){
+  if(!ts)return "";
+  var d=clDays(ts);
+  return d<=0?"today":(d<7?d+"d":(d<60?Math.round(d/7)+"w":Math.round(d/30)+"mo"));
+}
+/* A marked check outranks a passing look, so only the stronger one shows. */
+function clChips(o){
+  var s=clGet(o);
+  if(s.checked)return '<span class="chip clchk">Checked '+clShort(s.checked)+'</span>';
+  if(s.seen)return '<span class="chip clseen">seen '+clShort(s.seen)+'</span>';
+  return "";
+}
+function clBtnLabel(s){
+  return s.checked?("Checked "+clAgo(s.checked)+" \u00B7 mark again"):"Mark as checked";
+}
+function markChecked(i){
+  var o=O[i]; if(!o)return;
+  clMark(o,true);
+  renderOperator(i);
+}
+function clearCheckLog(){
+  if(!confirm("Clear this device's check history? It cannot be undone, and this is the only copy."))return;
+  try{localStorage.removeItem(CLOG_KEY);}catch(e){}
+  CLOG=null;
+  renderHome(q.value);
+}
+function checkedCards(){
+  var m=clLoad(), ks=Object.keys(m).filter(function(k){return m[k][1];});
+  if(!ks.length)return "";
+  ks.sort(function(a,b){return m[b][1]-m[a][1];});
+  var byKey={};
+  O.forEach(function(o,ix){var k=clKey(o); if(byKey[k]==null)byKey[k]=ix;});
+  /* RECENT already lists whatever was opened this session, directly above.
+     Skip those so a driver looked at a minute ago is not printed twice. */
+  var rows=ks.map(function(k){
+    var ix=byKey[k];
+    return (ix==null||RECENT.indexOf("o/"+ix)>-1)?"":opCard(O[ix]);
+  }).filter(Boolean).slice(0,6).join("");
+  if(!rows)return "";
+  return '<div class="seclabel">Checked recently</div>'+rows+
+    '<div class="hint"><span class="link" onclick="clearCheckLog()">Clear check history</span></div>';
+}
+
 function opCard(o,extra){
   const init=((o["First Name"]||" ")[0]+(o["Last Name"]||" ")[0]).toUpperCase();
   const flag=(o["In Active"]===true||o["Cancelled"]===true);
@@ -1260,6 +1368,7 @@ function opCard(o,extra){
     (o["Licence Number"]?'<span class="plate">'+esc(o["Licence Number"])+'</span>':'')+
     (ownop?'<span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
     (flag?'<span class="badge b-bad">INACTIVE/CANCELLED</span>':'')+
+    clChips(o)+
     '</div>'+(extra||'')+'</div><div class="chev">&#8250;</div></div>';
 }
 function ownerCard(w,extra){
@@ -1458,6 +1567,7 @@ function renderHome(q){
       '<div class="fchips" style="margin-top:8px">'+shortcut("permit","PVH Licenses")+shortcut("ins","Insurance")+
         shortcut("mvi","MVI")+shortcut("vlic","NS Permit")+'</div>'+
       recentCards()+
+      checkedCards()+
       '<div class="counts">'+DB.counts.vehicles+' active vehicles \u00B7 '+DB.counts.operators+' active operators \u00B7 '+(DB.counts.owners||0)+' owners</div>'+
       '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+
         '<br>App version '+APP_VERSION+'</div>'+
@@ -1577,6 +1687,10 @@ function renderVehicle(i){
 function renderOperator(i){
   const o=O[i]; if(!o){renderHome("");return;}
   noteRecent("o/"+i);
+  /* Read the log before recording this visit, otherwise the page would only
+     ever report the look being taken right now. */
+  const prior=clGet(o);
+  clMark(o,false);
   const flag=(o["In Active"]===true||o["Cancelled"]===true);
   const ownedW=W.filter(w=>w._op===i);
   let h="";
@@ -1584,6 +1698,9 @@ function renderOperator(i){
     '&#9733; OWNER-OPERATOR &mdash; also registered as vehicle owner</div>';
   if(flag) h+='<div class="alertbar">&#9888; Licence flagged '+
     (o["Cancelled"]===true?'CANCELLED':'INACTIVE')+' in system</div>';
+  if(prior.checked&&clDays(prior.checked)<14)
+    h+='<div class="alertbar" style="background:rgba(95,174,255,.14);color:var(--accent);border-color:rgba(95,174,255,.4)">'+
+      '&#9202; Already checked '+esc(clAgo(prior.checked))+' on this device</div>';
   h+='<div class="dhead"><div class="dtop"><div class="opdot" style="flex:0 0 66px;height:66px;font-size:22px">'+
     esc(((o["First Name"]||" ")[0]+(o["Last Name"]||" ")[0]).toUpperCase())+'</div>'+
     '<div><div class="dtitle">'+esc(opName(o))+'</div>'+
@@ -1596,8 +1713,11 @@ function renderOperator(i){
     '</div></div>';
   const addr=[o["Address1"],o["Address2"],[o["City"],o["Province"],o["Postal Code"]].filter(Boolean).join(", ")]
     .filter(Boolean).map(esc).join("<br>");
+  h+='<button class="copybtn" onclick="markChecked('+i+')">'+esc(clBtnLabel(prior))+'</button>';
   h+='<button class="copybtn" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
+    row("Last checked",prior.checked?esc(clAgo(prior.checked)):"\u2014")+
+    row("Last viewed",prior.seen?esc(clAgo(prior.seen)):"\u2014")+
     row("Address",addr||"\u2014")+
     row("Phone",telLink(o["Phone"]))+
     row("Cell",telLink(o["Cell Phone"]))+
@@ -1665,6 +1785,7 @@ q.addEventListener("input",()=>{
 });
 clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();renderHome("");});
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
+window.markChecked=markChecked;window.clearCheckLog=clearCheckLog;
 window.__route=route;
 window.addEventListener("hashchange",route);
 route();
