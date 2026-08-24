@@ -1248,6 +1248,7 @@ function vehCard(v,extra){
     '<div class="csub">'+esc(ownerName(v))+(v["Business Name"]?' \u00B7 '+esc(v["Business Name"]):'')+'</div>'+
     '<div class="crow2"><span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span>'+
     (v["Plate No"]?'<span class="plate">'+esc(v["Plate No"])+'</span>':'')+
+    clChipsV(v)+
     '</div>'+(extra||'')+'</div><div class="chev">&#8250;</div></div>';
 }
 /* Check history -- a rolling, per-device record of when a driver was last
@@ -1268,7 +1269,17 @@ var CLOG_KEY="pvh_check_log", CLOG_DAYS=180, CLOG_MAX=900, CLOG=null;
 function clKey(o){
   var s=String(o["Master Number"]==null?"":o["Master Number"]).trim().toUpperCase();
   s=s.replace(/^4A\b/,"").replace(/^0*4\s+/,"").replace(/\s+/g,"");
-  return s||("#"+(o["ID"]==null?"?":o["ID"]));
+  return "o:"+(s||("#"+(o["ID"]==null?"?":o["ID"])));
+}
+/* Vehicles key on Licence No -- the CBRM-assigned TO/LTO/LO number, and the
+   only vehicle field that holds up: present on 344 of 345 and never
+   duplicated. Deck numbers are blank on a third of the fleet and 29 plates
+   are shared between two records, so keying on either would file one
+   vehicle's history under another. The o:/v: prefixes keep the two sets
+   apart in one log. */
+function clKeyV(v){
+  var s=String(v["Licence No"]==null?"":v["Licence No"]).trim().toUpperCase().replace(/\s+/g,"");
+  return "v:"+(s||("#"+(v["Vehicle ID"]==null?"?":v["Vehicle ID"])));
 }
 function clLoad(){
   if(CLOG)return CLOG;
@@ -1293,15 +1304,19 @@ function clSave(){
   }
   try{localStorage.setItem(CLOG_KEY,JSON.stringify(m));}catch(e){}
 }
-function clGet(o){
-  var e=clLoad()[clKey(o)];
+function clGetK(k){
+  var e=clLoad()[k];
   return {seen:(e&&e[0])||0, checked:(e&&e[1])||0};
 }
-function clMark(o,deliberate){
-  var m=clLoad(), k=clKey(o), e=m[k]||[0,0];
+function clMarkK(k,deliberate){
+  var m=clLoad(), e=m[k]||[0,0];
   e[deliberate?1:0]=Math.floor(Date.now()/1000);
   m[k]=e; clSave();
 }
+function clGet(o){return clGetK(clKey(o));}
+function clMark(o,deliberate){clMarkK(clKey(o),deliberate);}
+function clGetV(v){return clGetK(clKeyV(v));}
+function clMarkV(v,deliberate){clMarkK(clKeyV(v),deliberate);}
 function clDays(ts){return Math.floor((Date.now()/1000-ts)/86400);}
 function clAgo(ts){
   if(!ts)return "";
@@ -1319,12 +1334,13 @@ function clShort(ts){
   return d<=0?"today":(d<7?d+"d":(d<60?Math.round(d/7)+"w":Math.round(d/30)+"mo"));
 }
 /* A marked check outranks a passing look, so only the stronger one shows. */
-function clChips(o){
-  var s=clGet(o);
+function clChipsFor(s){
   if(s.checked)return '<span class="chip clchk">Checked '+clShort(s.checked)+'</span>';
   if(s.seen)return '<span class="chip clseen">seen '+clShort(s.seen)+'</span>';
   return "";
 }
+function clChips(o){return clChipsFor(clGet(o));}
+function clChipsV(v){return clChipsFor(clGetV(v));}
 function clBtnLabel(s){
   return s.checked?("Checked "+clAgo(s.checked)+" \u00B7 mark again"):"Mark as checked";
 }
@@ -1333,6 +1349,11 @@ function markChecked(i){
   clMark(o,true);
   renderOperator(i);
 }
+function markCheckedV(i){
+  var v=V[i]; if(!v)return;
+  clMarkV(v,true);
+  renderVehicle(i);
+}
 function clearCheckLog(){
   if(!confirm("Clear this device's check history? It cannot be undone, and this is the only copy."))return;
   try{localStorage.removeItem(CLOG_KEY);}catch(e){}
@@ -1340,16 +1361,18 @@ function clearCheckLog(){
   renderHome(q.value);
 }
 function checkedCards(){
-  var m=clLoad(), ks=Object.keys(m).filter(function(k){return m[k][1];});
+  var m=clLoad(), byKey={};
+  O.forEach(function(o,ix){var k=clKey(o); if(byKey[k]==null)byKey[k]={t:"o",i:ix};});
+  V.forEach(function(v,ix){var k=clKeyV(v); if(byKey[k]==null)byKey[k]={t:"v",i:ix};});
+  var ks=Object.keys(m).filter(function(k){return m[k][1]&&byKey[k];});
   if(!ks.length)return "";
   ks.sort(function(a,b){return m[b][1]-m[a][1];});
-  var byKey={};
-  O.forEach(function(o,ix){var k=clKey(o); if(byKey[k]==null)byKey[k]=ix;});
   /* RECENT already lists whatever was opened this session, directly above.
-     Skip those so a driver looked at a minute ago is not printed twice. */
+     Skip those so a record looked at a minute ago is not printed twice. */
   var rows=ks.map(function(k){
-    var ix=byKey[k];
-    return (ix==null||RECENT.indexOf("o/"+ix)>-1)?"":opCard(O[ix]);
+    var e=byKey[k];
+    if(RECENT.indexOf(e.t+"/"+e.i)>-1)return "";
+    return e.t==="o"?opCard(O[e.i]):vehCard(V[e.i]);
   }).filter(Boolean).slice(0,6).join("");
   if(!rows)return "";
   return '<div class="seclabel">Checked recently</div>'+rows+
@@ -1647,10 +1670,20 @@ function telLink(p){
 function renderVehicle(i){
   const v=V[i]; if(!v){renderHome("");return;}
   noteRecent("v/"+i);
+  /* Read before recording this visit, so the page reports the last time the
+     vehicle was looked at rather than the look being taken now. Kept separate
+     from the driver's history on purpose -- the same car may be out with a
+     different operator, so a vehicle check says nothing about the driver. */
+  const priorV=clGetV(v);
+  clMarkV(v,false);
   const owner=(v._owner!=null)?W[v._owner]:null;
   const others=owner?(owner._veh||[]).map(ix=>V[ix]).filter(x=>x!==v):[];
   const op=(v._op!=null)?O[v._op]:null;
-  let h='<div class="dhead"><div class="dtop">'+deckHTML(v,true)+
+  let h="";
+  if(priorV.checked&&clDays(priorV.checked)<14)
+    h+='<div class="alertbar" style="background:rgba(95,174,255,.14);color:var(--accent);border-color:rgba(95,174,255,.4)">'+
+      '&#9202; This vehicle was already checked '+esc(clAgo(priorV.checked))+' on this device</div>';
+  h+='<div class="dhead"><div class="dtop">'+deckHTML(v,true)+
     '<div><div class="dtitle">'+esc(v["Make Model"]||"Vehicle")+'</div>'+
     '<div class="dsub">'+dash(v["Vehicle Color"])+' \u00B7 '+dash(v["v Year"])+
     ' \u00B7 <span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span></div>'+
@@ -1661,6 +1694,7 @@ function renderVehicle(i){
     status("NS Permit",v["NSVehicle Permit Expiry"])+
     status("MVI due",addYear(v["First MVIDate"]))+
     '</div></div>';
+  h+='<button class="copybtn" onclick="markCheckedV('+i+')">'+esc(clBtnLabel(priorV))+'</button>';
   h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
@@ -1676,6 +1710,8 @@ function renderVehicle(i){
     row("First MVI",dash(v["First MVIDate"]))+
     row("MVI due (MVI + 1 yr)",dash(addYear(v["First MVIDate"])))+
     row("Vehicle ID",dash(v["Vehicle ID"]))+
+    row("Last checked",priorV.checked?esc(clAgo(priorV.checked)):"\u2014")+
+    row("Last viewed",priorV.seen?esc(clAgo(priorV.seen)):"\u2014")+
     '</div>';
   if(v["Notes"]) h+='<div class="seclabel">Notes</div><div class="notes">'+esc(v["Notes"])+'</div>';
   if(others.length){
@@ -1716,8 +1752,6 @@ function renderOperator(i){
   h+='<button class="copybtn" onclick="markChecked('+i+')">'+esc(clBtnLabel(prior))+'</button>';
   h+='<button class="copybtn" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
-    row("Last checked",prior.checked?esc(clAgo(prior.checked)):"\u2014")+
-    row("Last viewed",prior.seen?esc(clAgo(prior.seen)):"\u2014")+
     row("Address",addr||"\u2014")+
     row("Phone",telLink(o["Phone"]))+
     row("Cell",telLink(o["Cell Phone"]))+
@@ -1726,6 +1760,8 @@ function renderOperator(i){
     row("Licence year",dash(o["v Year"]))+
     row("Approved",dash(o["Approval Date"]))+
     row("District",dash(o["District"]))+
+    row("Last checked",prior.checked?esc(clAgo(prior.checked)):"\u2014")+
+    row("Last viewed",prior.seen?esc(clAgo(prior.seen)):"\u2014")+
     '</div>';
   if(o["Notes"]) h+='<div class="seclabel">Notes</div><div class="notes">'+esc(o["Notes"])+'</div>';
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
@@ -1785,7 +1821,7 @@ q.addEventListener("input",()=>{
 });
 clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();renderHome("");});
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
-window.markChecked=markChecked;window.clearCheckLog=clearCheckLog;
+window.markChecked=markChecked;window.markCheckedV=markCheckedV;window.clearCheckLog=clearCheckLog;
 window.__route=route;
 window.addEventListener("hashchange",route);
 route();
