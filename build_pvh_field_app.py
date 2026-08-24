@@ -87,6 +87,17 @@ def clean_value(v):
     return v
 
 
+# Which source column feeds which on-screen status row. The two permit
+# columns are easy to transpose, so state it once here:
+#
+#   "Expiry Date"              -> PVH License  (the CBRM taxi licence)
+#   "NSVehicle Permit Expiry"  -> NS Permit    (the provincial vehicle permit)
+#
+# The column names mean exactly what they say. An earlier version of this
+# build had the two swapped, which showed vehicles as PVH-expired in the
+# field when only their NS permit had lapsed. Verified 2026-08-24 against
+# deck 87 (licence TO4351): Expiry Date 01/31/2027, NSVehicle Permit
+# Expiry 07/31/2026 -- its PVH licence is current. Do not transpose these.
 VEH_DATES = ["NSVehicle Permit Expiry", "First MVIDate", "Insurance Expiry",
              "Inspection Date", "Expiry Date"]
 OP_DATES = ["NSDLExpired Date", "Approval Date", "Renewal Date"]
@@ -461,8 +472,8 @@ def quality_report(vehicles, operators, owners=None):
     for field, label in [("Plate No", "plate"), ("VIN", "VIN"),
                          ("First MVIDate", "MVI date"),
                          ("Insurance Expiry", "insurance expiry"),
-                         ("NSVehicle Permit Expiry", "PVH licence expiry"),
-                         ("Expiry Date", "veh licence expiry")]:
+                         ("Expiry Date", "PVH licence expiry"),
+                         ("NSVehicle Permit Expiry", "NS permit expiry")]:
         m = [v for v in vehicles if v[field] in (None, "")]
         if m:
             ids = ", ".join(str(x["Deck No"] or x["Plate No"] or x["VIN"] or "?") for x in m[:10])
@@ -497,9 +508,9 @@ def _veh_flags(v):
     due = _mvi_due(v["First MVIDate"])
     if due and due < datetime.date.today():
         f.add("MVI")
-    for field, label in [("NSVehicle Permit Expiry", "PVH License"),
+    for field, label in [("Expiry Date", "PVH License"),
                          ("Insurance Expiry", "Insurance"),
-                         ("Expiry Date", "NS Permit")]:
+                         ("NSVehicle Permit Expiry", "NS Permit")]:
         if _expired(v[field]):
             f.add(label)
     return f
@@ -1289,9 +1300,9 @@ function chkInto(out,soon,k,label,date){
 function vehFlagList(v,soon){
   const out=[];
   chkInto(out,soon,"mvi","MVI",addYear(v["First MVIDate"]));
-  chkInto(out,soon,"permit","PVH License",v["NSVehicle Permit Expiry"]);
+  chkInto(out,soon,"permit","PVH License",v["Expiry Date"]);
   chkInto(out,soon,"ins","Insurance",v["Insurance Expiry"]);
-  chkInto(out,soon,"vlic","NS Permit",v["Expiry Date"]);
+  chkInto(out,soon,"vlic","NS Permit",v["NSVehicle Permit Expiry"]);
   return out;
 }
 function opFlagList(o,soon){
@@ -1362,9 +1373,9 @@ function vehSummary(v){
     v["Owner Address"]?"Owner address: "+v["Owner Address"]:null,
     (v._op!=null&&(O[v._op]["Cell Phone"]||O[v._op]["Phone"]))?"Owner phone (op. record): "+(O[v._op]["Cell Phone"]||O[v._op]["Phone"]):null,
     "VIN: "+(v["VIN"]||"\u2014")+" \u00B7 Veh lic no: "+(v["Licence No"]||"\u2014"),
-    statusText("PVH License",v["NSVehicle Permit Expiry"]),
+    statusText("PVH License",v["Expiry Date"]),
     statusText("Insurance",v["Insurance Expiry"]),
-    statusText("NS Permit",v["Expiry Date"]),
+    statusText("NS Permit",v["NSVehicle Permit Expiry"]),
     statusText("MVI due",addYear(v["First MVIDate"])),
     "Data as of "+DB.built+" \u00B7 copied "+new Date().toLocaleString()].filter(x=>x!=null).join("\n");
 }
@@ -1535,9 +1546,9 @@ function renderVehicle(i){
     ' \u00B7 <span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span></div>'+
     (v["Plate No"]?'<div class="bigplate tap" onclick="copyField(this,\''+esc(v["Plate No"]).replace(/'/g,"\\'")+'\')">'+esc(v["Plate No"])+'</div>':'')+
     '</div></div><div class="badges">'+
-    status("PVH License",v["NSVehicle Permit Expiry"])+
+    status("PVH License",v["Expiry Date"])+
     status("Insurance",v["Insurance Expiry"])+
-    status("NS Permit",v["Expiry Date"])+
+    status("NS Permit",v["NSVehicle Permit Expiry"])+
     status("MVI due",addYear(v["First MVIDate"]))+
     '</div></div>';
   h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
