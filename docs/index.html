@@ -101,6 +101,7 @@ main{flex:1;padding:10px 12px 40px}
 .t-Tour{background:rgba(77,163,255,.14);color:var(--tour)}
 .clchk{background:rgba(95,174,255,.16);color:var(--accent)}
 .clseen{background:var(--panel2);color:var(--faint)}
+.pairnote{margin-top:5px;font-size:11px;color:var(--faint)}
 .clpanel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;
   padding:10px 13px;border:1px solid var(--line);border-radius:12px;
   background:var(--panel);font-size:13px}
@@ -243,7 +244,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v7 · 2026-08-24";
+var APP_VERSION="v8 · 2026-08-24";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -453,6 +454,12 @@ function clChipsW(w){return clChipsFor(clGetW(w));}
 /* One panel, one position, every record type. Always rendered -- "not checked"
    is itself the answer to the question the officer is asking, and a panel that
    comes and goes is one you have to hunt for. */
+/* Shown on both halves of an owner-operator's pair of search hits, so two
+   cards for one human read as one person with two records rather than two
+   separate people. */
+function pairNote(where){
+  return '<div class="pairnote">Same person \u00B7 also listed under '+where+'</div>';
+}
 function clPanel(s,handler){
   var line=s.checked
     ?'<b>Checked '+esc(clAgo(s.checked))+'</b>'+(s.seen?' \u00B7 seen '+esc(clAgo(s.seen)):'')
@@ -730,9 +737,16 @@ function renderHome(q){
     return;
   }
   let h='<div class="counts">'+r.v.length+' vehicle'+(r.v.length===1?"":"s")+', '+r.o.length+' operator'+(r.o.length===1?"":"s")+', '+r.w.length+' owner'+(r.w.length===1?"":"s")+'</div>';
+  /* An owner-operator surfaces once as an owner and once as an operator.
+     Flag the pair only when both sides actually made the result set. */
+  const oInResult=new Set(r.o.map(o=>o._i));
+  const pairedOps=new Set();
+  r.w.forEach(w=>{if(w._op!=null&&oInResult.has(w._op))pairedOps.add(w._op);});
   if(r.v.length){h+='<div class="seclabel">Vehicles ('+r.v.length+')</div>'+r.v.map(v=>vehCard(v)).join("");}
-  if(r.w.length){h+='<div class="seclabel">Owners ('+r.w.length+')</div>'+r.w.map(w=>ownerCard(w)).join("");}
-  if(r.o.length){h+='<div class="seclabel">Operators ('+r.o.length+')</div>'+r.o.map(o=>opCard(o)).join("");}
+  if(r.w.length){h+='<div class="seclabel">Owners ('+r.w.length+')</div>'+
+    r.w.map(w=>ownerCard(w,(w._op!=null&&oInResult.has(w._op))?pairNote("Operators below"):"")).join("");}
+  if(r.o.length){h+='<div class="seclabel">Operators ('+r.o.length+')</div>'+
+    r.o.map(o=>opCard(o,pairedOps.has(o._i)?pairNote("Owners above"):"")).join("");}
   if(!r.v.length&&!r.o.length&&!r.w.length){
     // U4: absence-as-signal
     const aq=alnum(q); const looksPlate=aq.length>=2&&aq.length<=8&&/[0-9]/.test(aq)&&/^[A-Z0-9]+$/.test(aq);
