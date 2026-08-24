@@ -229,7 +229,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v1 · 2026-08-23";
+var APP_VERSION="v2 · 2026-08-24";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -378,9 +378,9 @@ function chkInto(out,soon,k,label,date){
 function vehFlagList(v,soon){
   const out=[];
   chkInto(out,soon,"mvi","MVI",addYear(v["First MVIDate"]));
-  chkInto(out,soon,"permit","PVH License",v["NSVehicle Permit Expiry"]);
+  chkInto(out,soon,"permit","PVH License",v["Expiry Date"]);
   chkInto(out,soon,"ins","Insurance",v["Insurance Expiry"]);
-  chkInto(out,soon,"vlic","NS Permit",v["Expiry Date"]);
+  chkInto(out,soon,"vlic","NS Permit",v["NSVehicle Permit Expiry"]);
   return out;
 }
 function opFlagList(o,soon){
@@ -451,9 +451,9 @@ function vehSummary(v){
     v["Owner Address"]?"Owner address: "+v["Owner Address"]:null,
     (v._op!=null&&(O[v._op]["Cell Phone"]||O[v._op]["Phone"]))?"Owner phone (op. record): "+(O[v._op]["Cell Phone"]||O[v._op]["Phone"]):null,
     "VIN: "+(v["VIN"]||"\u2014")+" \u00B7 Veh lic no: "+(v["Licence No"]||"\u2014"),
-    statusText("PVH License",v["NSVehicle Permit Expiry"]),
+    statusText("PVH License",v["Expiry Date"]),
     statusText("Insurance",v["Insurance Expiry"]),
-    statusText("NS Permit",v["Expiry Date"]),
+    statusText("NS Permit",v["NSVehicle Permit Expiry"]),
     statusText("MVI due",addYear(v["First MVIDate"])),
     "Data as of "+DB.built+" \u00B7 copied "+new Date().toLocaleString()].filter(x=>x!=null).join("\n");
 }
@@ -624,9 +624,9 @@ function renderVehicle(i){
     ' \u00B7 <span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span></div>'+
     (v["Plate No"]?'<div class="bigplate tap" onclick="copyField(this,\''+esc(v["Plate No"]).replace(/'/g,"\\'")+'\')">'+esc(v["Plate No"])+'</div>':'')+
     '</div></div><div class="badges">'+
-    status("PVH License",v["NSVehicle Permit Expiry"])+
+    status("PVH License",v["Expiry Date"])+
     status("Insurance",v["Insurance Expiry"])+
-    status("NS Permit",v["Expiry Date"])+
+    status("NS Permit",v["NSVehicle Permit Expiry"])+
     status("MVI due",addYear(v["First MVIDate"]))+
     '</div></div>';
   h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
