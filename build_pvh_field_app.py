@@ -1023,7 +1023,11 @@ main{flex:1;padding:10px 12px 40px}
 .t-Tour{background:rgba(77,163,255,.14);color:var(--tour)}
 .clchk{background:rgba(95,174,255,.16);color:var(--accent)}
 .clseen{background:var(--panel2);color:var(--faint)}
-.pairnote{margin-top:5px;font-size:11px;color:var(--faint)}
+.pairnote{display:inline-flex;align-items:center;gap:6px;margin-top:7px;
+  padding:4px 9px;border-radius:7px;font-size:12px;font-weight:600;
+  color:var(--accent);background:rgba(95,174,255,.12);
+  border:1px solid rgba(95,174,255,.34)}
+.pairnote b{font-size:13px;line-height:1}
 .clpanel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;
   padding:10px 13px;border:1px solid var(--line);border-radius:12px;
   background:var(--panel);font-size:13px}
@@ -1379,8 +1383,8 @@ function clChipsW(w){return clChipsFor(clGetW(w));}
 /* Shown on both halves of an owner-operator's pair of search hits, so two
    cards for one human read as one person with two records rather than two
    separate people. */
-function pairNote(where){
-  return '<div class="pairnote">Same person \u00B7 also listed under '+where+'</div>';
+function pairNote(arrow,where){
+  return '<div class="pairnote"><b>'+arrow+'</b> Same person \u00B7 see '+where+'</div>';
 }
 function clPanel(s,handler){
   var line=s.checked
@@ -1666,9 +1670,9 @@ function renderHome(q){
   r.w.forEach(w=>{if(w._op!=null&&oInResult.has(w._op))pairedOps.add(w._op);});
   if(r.v.length){h+='<div class="seclabel">Vehicles ('+r.v.length+')</div>'+r.v.map(v=>vehCard(v)).join("");}
   if(r.w.length){h+='<div class="seclabel">Owners ('+r.w.length+')</div>'+
-    r.w.map(w=>ownerCard(w,(w._op!=null&&oInResult.has(w._op))?pairNote("Operators below"):"")).join("");}
+    r.w.map(w=>ownerCard(w,(w._op!=null&&oInResult.has(w._op))?pairNote("\u2193","Operators"):"")).join("");}
   if(r.o.length){h+='<div class="seclabel">Operators ('+r.o.length+')</div>'+
-    r.o.map(o=>opCard(o,pairedOps.has(o._i)?pairNote("Owners above"):"")).join("");}
+    r.o.map(o=>opCard(o,pairedOps.has(o._i)?pairNote("\u2191","Owners"):"")).join("");}
   if(!r.v.length&&!r.o.length&&!r.w.length){
     // U4: absence-as-signal
     const aq=alnum(q); const looksPlate=aq.length>=2&&aq.length<=8&&/[0-9]/.test(aq)&&/^[A-Z0-9]+$/.test(aq);
