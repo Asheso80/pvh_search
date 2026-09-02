@@ -21,3 +21,6 @@ logs/
 # Machine-specific daemon settings (SSRS host, report folder, Dropbox path).
 # Commit pvh_local_config.example.json instead.
 pvh_local_config.json
+
+# Stray temp files from an interrupted atomic write.
+._pvh_*.tmp

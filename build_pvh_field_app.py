@@ -20,10 +20,14 @@ Defaults:
 
 No payment, refund, SAP or criminal-check fields are embedded.
 """
+import io
+import os
 import re
 import sys
 import json
+import time
 import hashlib
+import tempfile
 import datetime
 from collections import Counter
 import pandas as pd
@@ -54,6 +58,45 @@ OP_FIELDS = [
     "NSDLExpired Date", "Approval Date", "Renewal Date", "District",
     "In Active", "Cancelled", "Notes",
 ]
+
+
+def write_out(path, data, encoding="utf-8"):
+    """Write a build output by rename, never by truncating the target.
+
+    Every output lands in the OneDrive-synced project folder, where the files
+    are Files-On-Demand placeholders. Opening one with "w" truncates it in
+    place, and the sync filter rejects that at random with OSError 22
+    (Invalid argument) -- that is what killed the Sep 2 build after the pull
+    had already succeeded. Writing a fresh temp file alongside the target and
+    renaming it over top never truncates anything, and means a build that dies
+    halfway can't leave a half-written app on the handsets.
+    """
+    folder = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix="._pvh_", suffix=".tmp")
+    try:
+        if isinstance(data, bytes):
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+        else:
+            with os.fdopen(fd, "w", encoding=encoding) as f:
+                f.write(data)
+        # The rename can still lose a race with the sync client or a scanner
+        # holding the old file open. That clears in moments, so wait it out
+        # rather than failing a run that has already done all the real work.
+        for attempt in range(4):
+            try:
+                os.replace(tmp, path)
+                return
+            except OSError:
+                if attempt == 3:
+                    raise
+                time.sleep(1.5)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def find_header_row(path, marker):
@@ -368,8 +411,7 @@ def main():
             .replace("__DATA_SCRIPT__", '<script id="data" type="application/json">' + payload + "</script>")
             .replace("__BOOT__", SINGLE_BOOT)
             .replace("__APPVER__", shell_version()[0]))
-    with open(OUT_FILE, "w", encoding="utf-8") as f:
-        f.write(html)
+    write_out(OUT_FILE, html)
     kb = len(html.encode("utf-8")) // 1024
     addr_src = ADDR_FILE.split("/")[-1] if ADDR_FILE else "none (owner addresses skipped)"
     print(f"Built {OUT_FILE} ({kb} KB) | vehicles: {len(vehicles)} | operators: {len(operators)} | owners: {len(owners)}")
@@ -841,7 +883,9 @@ def make_icons(folder):
         w, h = px * 0.44, px * 0.15
         d.rounded_rectangle([(px - w) / 2, (px - h) / 2, (px + w) / 2, (px + h) / 2],
                             radius=h * 0.25, fill=(239, 242, 246, 255))
-        img.save(f"{folder}/icon-{px}.png")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        write_out(f"{folder}/icon-{px}.png", buf.getvalue())
     return True
 
 
@@ -891,16 +935,13 @@ def shell_version():
         rec = {"version": int(rec.get("version", 0)) + 1,
                "date": datetime.date.today().isoformat(),
                "hash": digest}
-        with open(VERSION_FILE, "w", encoding="utf-8") as f:
-            json.dump(rec, f, indent=2)
-            f.write("\n")
+        write_out(VERSION_FILE, json.dumps(rec, indent=2) + "\n")
 
     _SHELL_VER = (f"v{rec['version']} · {rec['date']}", digest)
     return _SHELL_VER
 
 
 def write_shell(payload_json):
-    import os
     os.makedirs("docs", exist_ok=True)
     label, _ = shell_version()
     shell_html = (TEMPLATE
@@ -908,16 +949,16 @@ def write_shell(payload_json):
                   .replace("__DATA_SCRIPT__", "")
                   .replace("__BOOT__", SHELL_BOOT)
                   .replace("__APPVER__", label))
-    open("docs/index.html", "w", encoding="utf-8").write(shell_html)
+    write_out("docs/index.html", shell_html)
     # Key the cache on the bytes actually served, not on the pre-substitution
     # digest: the version label is baked into this file, so a build that changes
     # only the label still needs a new cache key. Deterministic either way --
     # the label is settled before this is computed.
     cache_key = hashlib.sha256(shell_html.encode("utf-8")).hexdigest()[:8]
-    open("docs/sw.js", "w", encoding="utf-8").write(SW_JS.replace("__BUILD__", cache_key))
-    open("docs/manifest.webmanifest", "w", encoding="utf-8").write(MANIFEST)
+    write_out("docs/sw.js", SW_JS.replace("__BUILD__", cache_key))
+    write_out("docs/manifest.webmanifest", MANIFEST)
     make_icons("docs")
-    open("PVH_data.json", "w", encoding="utf-8").write(payload_json)
+    write_out("PVH_data.json", payload_json)
     print(f"Shell written to docs/ | app version {label} | "
           f"data written to PVH_data.json (do NOT commit)")
 

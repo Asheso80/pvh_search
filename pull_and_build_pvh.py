@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 pull_and_build_pvh.py
 
 Refreshes the PVH Field Lookup data pipeline in one step:
@@ -35,9 +35,11 @@ unattended run leaves a record of what happened.
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -144,6 +146,26 @@ def fetch_excel(session: requests.Session, report_name: str) -> bytes:
     return content
 
 
+def write_source(path: Path, content: bytes) -> None:
+    """Land a refreshed export by rename rather than truncating it in place.
+
+    Same reason as write_out() in build_pvh_field_app.py: these files are
+    OneDrive placeholders, and truncating one can fail mid-run with OSError 22.
+    A half-written .xlsx would also be worse than no write at all.
+    """
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix="._pvh_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def main():
     log = setup_logging()
     log.info("=== Run started ===")
@@ -171,7 +193,7 @@ def main():
 
     # All downloads validated -- safe to overwrite in place.
     for report_name, filename in REPORTS.items():
-        (SCRIPT_DIR / filename).write_bytes(fetched[report_name])
+        write_source(SCRIPT_DIR / filename, fetched[report_name])
     log.info("All source files updated.")
 
     consumed = [n for n in REPORTS if n not in NOT_CONSUMED_BY_BUILD]
