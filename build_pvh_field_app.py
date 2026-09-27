@@ -148,6 +148,7 @@ OP_DATES = ["NSDLExpired Date", "Approval Date", "Renewal Date"]
 DATE_WARNINGS = []
 DEDUP_LOG = []
 OWNER_NAME_DRIFT = []
+LINK_AMBIGUOUS = []
 
 def load(path, marker, fields, date_cols):
     hdr = find_header_row(path, marker)
@@ -194,6 +195,63 @@ def norm_part(s):
 def norm_name(last, first):
     l, f = norm_part(last), norm_part(first)
     return (l, f) if (l or f) else None
+
+
+STREET_ABBR = {
+    "STREET": "ST", "AVENUE": "AVE", "AV": "AVE", "ROAD": "RD", "DRIVE": "DR",
+    "LANE": "LN", "CRESCENT": "CRES", "COURT": "CT", "BOULEVARD": "BLVD",
+    "PLACE": "PL", "HIGHWAY": "HWY", "TERRACE": "TERR", "CIRCLE": "CIR",
+}
+UNIT_WORDS = {"APT", "APARTMENT", "UNIT", "SUITE", "STE"}
+
+
+def norm_street(s):
+    """Normalize a street line for tie-breaking operators who share a name.
+
+    Case, punctuation and spacing are ignored, common street-type words are
+    abbreviated (STREET -> ST) and a unit suffix ("APT 2", "UNIT 5", "#3") is
+    dropped, so "10 Sample Street" and "10 SAMPLE ST APT 1" compare equal.
+    Only the street line is used -- the owner address carries city and postal
+    code after the first " · ", and those are left out.
+    """
+    if not s:
+        return None
+    s = str(s).split("·")[0].upper()
+    s = re.sub(r"#\s*\w+", " ", s)
+    toks = re.findall(r"[A-Z0-9]+", s)
+    out = []
+    skip = False
+    for t in toks:
+        if skip:
+            skip = False
+            continue
+        if t in UNIT_WORDS:
+            skip = True
+            continue
+        out.append(STREET_ABBR.get(t, t))
+    return " ".join(out) or None
+
+
+def resolve_operator(name_key, street, ops_by_name, operators):
+    """Pick the operator record that is the same person as a vehicle owner.
+
+    Returns (index, candidates). A name held by exactly one operator links as
+    before. When several operators share the name, the owner's street line
+    breaks the tie; if that does not single out exactly one operator, nobody
+    is linked (index None) and the candidates are returned so the app can
+    say "possible match, verify" instead of guessing. Linking the first
+    operator in the file is how one vehicle ended up shown under the wrong operator.
+    """
+    cands = ops_by_name.get(name_key, []) if name_key else []
+    if len(cands) == 1:
+        return cands[0], []
+    if not cands:
+        return None, []
+    s = norm_street(street)
+    hits = [j for j in cands if s and norm_street(operators[j].get("Address1")) == s]
+    if len(hits) == 1:
+        return hits[0], []
+    return None, list(cands)
 
 
 def norm_master(m):
@@ -257,7 +315,7 @@ def dedupe_operators(operators):
     return result
 
 
-def build_owners(vehicles, op_by_name):
+def build_owners(vehicles, ops_by_name, operators):
     """Group vehicles into first-class Owner records.
 
     Grouped primarily by Owner ID -- a fully-populated identity key on
@@ -271,10 +329,12 @@ def build_owners(vehicles, op_by_name):
     Owner card; a split logs a warning, since a reused Owner ID is a real
     source-data problem worth flagging, not cosmetic spelling drift.
 
-    Owner-to-Operator linkage reuses the SAME exact-match name index the
-    rest of the app already treats as reliable (op_by_name) -- it
-    deliberately does NOT use the fuzzy tier, so an "Owner-Operator" label
-    is never a guess. Mutates vehicles in place, setting v["_owner"].
+    Owner-to-Operator linkage goes through resolve_operator(), the same
+    exact-name match (address tie-break when a name is shared) the vehicles
+    use -- it deliberately does NOT use the fuzzy tier, so an
+    "Owner-Operator" label is never a guess. An unresolved shared name
+    leaves _op None and lists the candidates in _opc. Mutates vehicles in
+    place, setting v["_owner"].
     """
     id_groups = {}
     for i, v in enumerate(vehicles):
@@ -307,14 +367,17 @@ def build_owners(vehicles, op_by_name):
             last = most_common(rows, "Owner Last Name")
             first = most_common(rows, "Owner First Name")
             nkey = norm_name(last, first)
+            addr = most_common(rows, "Owner Address")
+            op_ix, op_cands = resolve_operator(nkey, addr, ops_by_name, operators)
             owners.append({
                 "Owner ID": oid,
                 "Owner Last Name": last,
                 "Owner First Name": first,
                 "Business Name": most_common(rows, "Business Name"),
-                "Owner Address": most_common(rows, "Owner Address"),
+                "Owner Address": addr,
                 "_veh": sub_idxs,
-                "_op": op_by_name.get(nkey) if nkey else None,
+                "_op": op_ix,
+                "_opc": op_cands,
             })
     owners.sort(key=lambda o: (o["Owner Last Name"] or "", o["Owner First Name"] or ""))
     for i, o in enumerate(owners):
@@ -359,23 +422,38 @@ def main():
     merge_addresses(vehicles)
 
     # Link operators to vehicles by normalized owner name; fuzzy tier for near-misses.
+    # A name can belong to several licensed operators (16 names in the Sep 2026
+    # data, e.g. three operators with one name), so each vehicle is resolved to at most
+    # one operator via resolve_operator(); unresolved shared names are listed
+    # as "possible matches" on every candidate instead of linked to all of them.
     veh_by_name = {}
     for i, v in enumerate(vehicles):
         key = norm_name(v["Owner Last Name"], v["Owner First Name"])
         if key:
             veh_by_name.setdefault(key, []).append(i)
     owner_keys = list(veh_by_name.keys())
-    op_by_name = {}
+    ops_by_name = {}
     for j, op in enumerate(operators):
         k = norm_name(op["Last Name"], op["First Name"])
-        if k and k not in op_by_name:
-            op_by_name[k] = j
-    for v in vehicles:
+        if k:
+            ops_by_name.setdefault(k, []).append(j)
+    for op in operators:
+        op["_veh"], op["_vsn"] = [], []
+    for i, v in enumerate(vehicles):
         k = norm_name(v["Owner Last Name"], v["Owner First Name"])
-        v["_op"] = op_by_name.get(k) if k else None
+        v["_op"], v["_opc"] = resolve_operator(k, v.get("Owner Address"), ops_by_name, operators)
+        if v["_op"] is not None:
+            operators[v["_op"]]["_veh"].append(i)
+        for j in v["_opc"]:
+            operators[j]["_vsn"].append(i)
+        if v["_opc"]:
+            LINK_AMBIGUOUS.append(
+                f"Deck {v.get('Deck No') if v.get('Deck No') not in (None, '') else '?'} "
+                f"(plate {v.get('Plate No') or '?'}) — owner {v.get('Owner First Name')} "
+                f"{v.get('Owner Last Name')} matches {len(v['_opc'])} operators, no address match: "
+                + ", ".join(str(operators[j].get("Licence Number") or "?") for j in v["_opc"]))
     for op in operators:
         key = norm_name(op["Last Name"], op["First Name"])
-        op["_veh"] = veh_by_name.get(key, []) if key else []
         fz = []
         if key and len(key[0]) >= 3:
             for ok in owner_keys:
@@ -383,9 +461,9 @@ def main():
                     continue
                 if lev1(key[0], ok[0]) and lev1(key[1], ok[1]):
                     fz.extend(veh_by_name[ok])
-        op["_vfz"] = [i for i in fz if i not in op["_veh"]][:6]
+        op["_vfz"] = [i for i in fz if i not in op["_veh"] and i not in op["_vsn"]][:6]
 
-    owners = build_owners(vehicles, op_by_name)
+    owners = build_owners(vehicles, ops_by_name, operators)
 
     quality_report(vehicles, operators, owners)
     diff_report(OUT_FILE, vehicles, operators)
@@ -482,6 +560,7 @@ def merge_addresses(vehicles):
 
 def quality_report(vehicles, operators, owners=None):
     warn = list(DATE_WARNINGS) + list(OWNER_NAME_DRIFT)
+    warn += ["Operator link unconfirmed: " + a for a in LINK_AMBIGUOUS]
     decks, plates = {}, {}
     for v in vehicles:
         d, p = v["Deck No"], v["Plate No"]
@@ -1298,6 +1377,23 @@ function ownerName(v){
 function opName(o){
   return [o["First Name"],o["Middle"],o["Last Name"]].filter(Boolean).join(" ")||"\u2014";
 }
+/* Several operators can share an owner's name (up to five on one name in
+   the current data). The link carries the licence number so the one shown is
+   identifiable, and an unresolved shared name lists every candidate rather
+   than picking one -- the builder only links when the address confirms it. */
+function opLink(j){
+  const o=O[j];
+  return '<span class="link" onclick="go(\'o/'+j+'\')">'+esc(opName(o))+
+    (o["Licence Number"]?' ('+esc(o["Licence Number"])+')':'')+' &#8250;</span>';
+}
+function opcNote(c){
+  return '<span class="empty">Possible match \u2014 '+c.length+' operators share this name, verify manually:</span><br>'+
+    c.map(opLink).join("<br>");
+}
+function opcText(c){
+  return "POSSIBLE OWNER-OPERATOR \u2014 "+c.length+" operators share this name, verify: "+
+    c.map(j=>O[j]["Licence Number"]||"?").join(", ");
+}
 
 function vehCard(v,extra){
   return '<div class="card" onclick="go(\'v/'+v._i+'\')">'+deckHTML(v)+
@@ -1631,7 +1727,8 @@ function ownerSummary(w){
     "Owner ID: "+(w["Owner ID"]==null?"—":w["Owner ID"]),
     "Address: "+(w["Owner Address"]||"—"),
     "Vehicles: "+(w._veh||[]).length,
-    op?("OWNER-OPERATOR — also licensed as "+opName(op)):"Not separately licensed as an operator",
+    op?("OWNER-OPERATOR — also licensed as "+opName(op)+(op["Licence Number"]?" ("+op["Licence Number"]+")":"")):
+      ((w._opc||[]).length?opcText(w._opc):"Not separately licensed as an operator"),
     "Data as of "+DB.built+" · copied "+new Date().toLocaleString()].join("\n");
 }
 function copyRec(kind,i,btn){
@@ -1803,7 +1900,8 @@ function renderVehicle(i){
   h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
-    (owner&&owner._op!=null?row("Owner-Operator",'<span class="link" onclick="go(\'o/'+owner._op+'\')">'+esc(opName(O[owner._op]))+' &#8250;</span>'):"")+
+    (owner&&owner._op!=null?row("Owner-Operator",opLink(owner._op)):"")+
+    ((owner?owner._op==null&&(owner._opc||[]).length:(v._opc||[]).length)?row("Owner-Operator",opcNote(owner?owner._opc:v._opc)):"")+
     (op&&(op["Cell Phone"]||op["Phone"])?row("Owner phone (op. record)",telLink(op["Cell Phone"]||op["Phone"])):"")+
     row("Business",dash(v["Business Name"]))+
     (v["Owner Address"]?row("Owner address",esc(v["Owner Address"])):"")+
@@ -1864,8 +1962,12 @@ function renderOperator(i){
   if(o["Notes"]) h+='<div class="seclabel">Notes</div><div class="notes">'+esc(o["Notes"])+'</div>';
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Vehicles in this name ('+veh.length+')</div>';
-  h+=veh.length?veh.map(vehCard).join(""):'<div class="empty">No active vehicles registered under this exact name.</div>';
+  const sn=(o._vsn||[]).map(ix=>V[ix]).filter(Boolean);
+  h+=veh.length?veh.map(vehCard).join(""):'<div class="empty">'+(sn.length?
+    'None confirmed for this operator — see possible matches below.':
+    'No active vehicles registered under this exact name.')+'</div>';
   const fz=(o._vfz||[]).map(ix=>V[ix]).filter(Boolean);
+  if(sn.length)h+='<div class="seclabel">Possible matches \u2014 other operators share this name, verify before relying on ('+sn.length+')</div>'+sn.map(vehCard).join("");
   if(fz.length)h+='<div class="seclabel">Possible matches \u2014 similar name, verify before relying on ('+fz.length+')</div>'+fz.map(vehCard).join("");
   main.innerHTML=h;
 }
@@ -1888,7 +1990,8 @@ function renderOwner(i){
   h+='<div class="grid">'+
     row("Owner ID",dash(w["Owner ID"]))+
     row("Address",dash(w["Owner Address"]))+
-    (op?row("Operator link",'<span class="link" onclick="go(\'o/'+op._i+'\')">'+esc(opName(op))+' &#8250;</span>'):
+    (op?row("Operator link",opLink(w._op)):
+       (w._opc||[]).length?row("Operator link",opcNote(w._opc)):
        row("Operator link",'<span class="empty">Not separately licensed as an operator</span>'))+
     '</div>';
   const veh=(w._veh||[]).map(ix=>V[ix]).filter(Boolean);

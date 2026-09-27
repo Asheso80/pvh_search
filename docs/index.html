@@ -248,7 +248,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v10 · 2026-08-24";
+var APP_VERSION="v11 · 2026-09-27";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -334,6 +334,23 @@ function ownerName(v){
 }
 function opName(o){
   return [o["First Name"],o["Middle"],o["Last Name"]].filter(Boolean).join(" ")||"\u2014";
+}
+/* Several operators can share an owner's name (up to five on one name in
+   the current data). The link carries the licence number so the one shown is
+   identifiable, and an unresolved shared name lists every candidate rather
+   than picking one -- the builder only links when the address confirms it. */
+function opLink(j){
+  const o=O[j];
+  return '<span class="link" onclick="go(\'o/'+j+'\')">'+esc(opName(o))+
+    (o["Licence Number"]?' ('+esc(o["Licence Number"])+')':'')+' &#8250;</span>';
+}
+function opcNote(c){
+  return '<span class="empty">Possible match \u2014 '+c.length+' operators share this name, verify manually:</span><br>'+
+    c.map(opLink).join("<br>");
+}
+function opcText(c){
+  return "POSSIBLE OWNER-OPERATOR \u2014 "+c.length+" operators share this name, verify: "+
+    c.map(j=>O[j]["Licence Number"]||"?").join(", ");
 }
 
 function vehCard(v,extra){
@@ -668,7 +685,8 @@ function ownerSummary(w){
     "Owner ID: "+(w["Owner ID"]==null?"—":w["Owner ID"]),
     "Address: "+(w["Owner Address"]||"—"),
     "Vehicles: "+(w._veh||[]).length,
-    op?("OWNER-OPERATOR — also licensed as "+opName(op)):"Not separately licensed as an operator",
+    op?("OWNER-OPERATOR — also licensed as "+opName(op)+(op["Licence Number"]?" ("+op["Licence Number"]+")":"")):
+      ((w._opc||[]).length?opcText(w._opc):"Not separately licensed as an operator"),
     "Data as of "+DB.built+" · copied "+new Date().toLocaleString()].join("\n");
 }
 function copyRec(kind,i,btn){
@@ -840,7 +858,8 @@ function renderVehicle(i){
   h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
-    (owner&&owner._op!=null?row("Owner-Operator",'<span class="link" onclick="go(\'o/'+owner._op+'\')">'+esc(opName(O[owner._op]))+' &#8250;</span>'):"")+
+    (owner&&owner._op!=null?row("Owner-Operator",opLink(owner._op)):"")+
+    ((owner?owner._op==null&&(owner._opc||[]).length:(v._opc||[]).length)?row("Owner-Operator",opcNote(owner?owner._opc:v._opc)):"")+
     (op&&(op["Cell Phone"]||op["Phone"])?row("Owner phone (op. record)",telLink(op["Cell Phone"]||op["Phone"])):"")+
     row("Business",dash(v["Business Name"]))+
     (v["Owner Address"]?row("Owner address",esc(v["Owner Address"])):"")+
@@ -901,8 +920,12 @@ function renderOperator(i){
   if(o["Notes"]) h+='<div class="seclabel">Notes</div><div class="notes">'+esc(o["Notes"])+'</div>';
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Vehicles in this name ('+veh.length+')</div>';
-  h+=veh.length?veh.map(vehCard).join(""):'<div class="empty">No active vehicles registered under this exact name.</div>';
+  const sn=(o._vsn||[]).map(ix=>V[ix]).filter(Boolean);
+  h+=veh.length?veh.map(vehCard).join(""):'<div class="empty">'+(sn.length?
+    'None confirmed for this operator — see possible matches below.':
+    'No active vehicles registered under this exact name.')+'</div>';
   const fz=(o._vfz||[]).map(ix=>V[ix]).filter(Boolean);
+  if(sn.length)h+='<div class="seclabel">Possible matches \u2014 other operators share this name, verify before relying on ('+sn.length+')</div>'+sn.map(vehCard).join("");
   if(fz.length)h+='<div class="seclabel">Possible matches \u2014 similar name, verify before relying on ('+fz.length+')</div>'+fz.map(vehCard).join("");
   main.innerHTML=h;
 }
@@ -925,7 +948,8 @@ function renderOwner(i){
   h+='<div class="grid">'+
     row("Owner ID",dash(w["Owner ID"]))+
     row("Address",dash(w["Owner Address"]))+
-    (op?row("Operator link",'<span class="link" onclick="go(\'o/'+op._i+'\')">'+esc(opName(op))+' &#8250;</span>'):
+    (op?row("Operator link",opLink(w._op)):
+       (w._opc||[]).length?row("Operator link",opcNote(w._opc)):
        row("Operator link",'<span class="empty">Not separately licensed as an operator</span>'))+
     '</div>';
   const veh=(w._veh||[]).map(ix=>V[ix]).filter(Boolean);
