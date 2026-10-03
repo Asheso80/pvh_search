@@ -424,7 +424,11 @@ def shared_config():
     try:
         with io.open(path, encoding="utf-8") as f:
             cfg = json.load(f)
-    except (OSError, ValueError):
+    except OSError:
+        return None
+    except ValueError as exc:
+        print("WARNING: pvh_local_config.json is not valid JSON (" + str(exc) + ") -- "
+              "shared notes left OFF. Check for a missing or trailing comma.")
         return None
     url = str(cfg.get("supabase_url", "")).strip().rstrip("/")
     # The dashboard hands out the REST address (".../rest/v1/"); the app adds
