@@ -42,6 +42,27 @@ on conflict (id) do update set display_name = excluded.display_name;
 To remove someone's access, delete their row from `profiles` (they can still
 sign in but see nothing), or delete the user.
 
+## Upgrading an existing project: edit and remove notes
+
+If the project was set up before edit/remove existed, run
+`supabase/002_edit_remove.sql` once in the SQL editor **before** phones get the
+matching app version. It is safe to run again. A fresh project does not need it:
+`schema.sql` already includes it.
+
+Until it has run, notes still work, but an edit or removal is refused by the
+database and shows "A change to this note was not accepted" with a Dismiss link.
+
+What it guarantees:
+
+- Only the author can edit or remove their own note. Anyone signed in can still
+  tick it done.
+- Nothing is overwritten or erased. Each edit keeps the previous text in
+  `note_events` with who and when; a removal keeps the text and marks who and when.
+  Officers cannot add, change or delete audit entries (there is no policy that
+  allows it), and names and times come from the database, not the app.
+- To review the history: Table Editor → `note_events`, or
+  `select * from public.note_events order by created_at;`
+
 ## Reset an officer's password
 
 Officer logins need not be real mailboxes, so the dashboard's emailed reset link
