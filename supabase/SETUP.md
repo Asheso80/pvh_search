@@ -42,6 +42,24 @@ on conflict (id) do update set display_name = excluded.display_name;
 To remove someone's access, delete their row from `profiles` (they can still
 sign in but see nothing), or delete the user.
 
+## Reset an officer's password
+
+Officer logins need not be real mailboxes, so the dashboard's emailed reset link
+will not reach anyone. Set the password directly in the SQL editor:
+
+```sql
+update auth.users
+set encrypted_password = crypt('NewPasswordHere', gen_salt('bf')),
+    updated_at = now()
+where email = 'officer@example.com';
+```
+
+Keep the `where` line: without it every account gets the same password. It
+should report one row. If `crypt` is not found, use `extensions.crypt` and
+`extensions.gen_salt`. Their notes are unaffected.
+
+To cut someone off quickly, delete their row from `public.profiles`.
+
 ## 5. Point the app at it
 
 **Project Settings → API**: copy the **Project URL** and the **anon / publishable
