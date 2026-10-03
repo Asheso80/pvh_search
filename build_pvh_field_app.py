@@ -1892,11 +1892,13 @@ function ntDone(id,flag){
   OB.push({type:"done",noteId:id,done:!!flag,at:Math.floor(Date.now()/1000)});
   obSave(); keepScroll(); shSync(true);
 }
-function ntJump(){
+/* "Read" lands on the section; "Add note" also puts the cursor in the box, so
+   adding one is a single tap whether or not the record already has notes. */
+function ntJump(write){
   var e=document.getElementById("ntsec"); if(!e)return;
   e.scrollIntoView({behavior:"smooth",block:"start"});
   var ta=document.getElementById("ntbody");
-  if(ta&&e.getAttribute("data-n")==="0")setTimeout(function(){ta.focus();},350);
+  if(ta&&write)setTimeout(function(){ta.focus();},350);
 }
 function ntWhen(t){
   var d=new Date(t*1000), o={month:"short",day:"numeric",hour:"numeric",minute:"2-digit"};
@@ -1913,7 +1915,8 @@ function ntBar(key){
   var line=s.n?('<b>'+s.n+' note'+(s.n===1?'':'s')+'</b>'+
       (s.open?' · <b class="ntopen">'+s.open+' need'+(s.open===1?'s':'')+' action</b>':'')):'No notes yet';
   return '<div class="'+cls+'"><span class="cllabel">Notes</span><span class="clline">'+line+'</span>'+
-    '<button class="clbtn" onclick="ntJump()">'+(s.n?'Read':'Add note')+'</button></div>';
+    (s.n?'<button class="clbtn" onclick="ntJump(0)">Read</button>':'')+
+    '<button class="clbtn" onclick="ntJump(1)">Add note</button></div>';
 }
 function ntItem(n){
   var st=n.failed?'<span class="badge b-bad">NOT SENT</span>':(n.pending?'<span class="chip clseen">waiting to send</span>':'');
