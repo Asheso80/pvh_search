@@ -1172,7 +1172,7 @@ main{flex:1;padding:10px 12px 40px}
 .deck.limo{border-color:var(--limo);color:var(--limo)}
 .deck.tour{border-color:var(--tour);color:var(--tour)}
 .deck.shuttle{border-color:var(--shuttle);color:var(--shuttle)}
-.deck span{font-size:8px;letter-spacing:.08em;font-weight:600;margin-bottom:2px}
+.deck span{font-size:10px;letter-spacing:.08em;font-weight:600;margin-bottom:2px}
 .deck.none{border-style:dashed;color:var(--faint);border-color:var(--line);font-size:11px}
 .opdot{flex:0 0 52px;height:52px;border-radius:50%;background:var(--panel2);
   border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
@@ -1185,7 +1185,7 @@ main{flex:1;padding:10px 12px 40px}
 .crow2{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
 .plate{font-family:var(--mono);font-weight:700;font-size:13px;background:var(--platebg);
   border:1px solid var(--plateline);border-radius:5px;padding:2px 7px;letter-spacing:.06em}
-.chip{font-size:11px;font-weight:700;letter-spacing:.05em;border-radius:5px;
+.chip{font-size:12px;font-weight:700;letter-spacing:.05em;border-radius:5px;
   padding:2px 7px;text-transform:uppercase}
 .t-Taxi{background:rgba(245,185,66,.14);color:var(--taxi)}
 .t-Limo{background:rgba(176,140,255,.14);color:var(--limo)}
@@ -1228,6 +1228,25 @@ main{flex:1;padding:10px 12px 40px}
 .nthrow{padding:4px 0}
 .nthrow .ntbody{font-size:14px;color:var(--dim)}
 .ntmine{display:flex;gap:16px;margin-top:9px;font-size:13px;font-weight:600}
+/* touch: text links get a 44px-tall hit area without changing the layout */
+.chlink,.nted .link,.ntfoot .link,.ntwarn .link,.ntmine .link,.ntshow{display:inline-block;padding:12px 8px;margin:-12px -8px}
+.ntmine{gap:18px}
+/* check history + notes read as one two-row block, not two stacked boxes */
+.clpanel.joined{margin-bottom:0;border-bottom-left-radius:0;border-bottom-right-radius:0}
+.ntbar.joined{margin-top:0;border-top-width:0;border-top-left-radius:0;border-top-right-radius:0;margin-bottom:10px}
+.joined .cllabel{display:none}
+.joined .clline{flex:1 1 140px;min-width:0}
+.ntprevs{flex:0 0 100%;border-top:1px solid rgba(255,99,99,.35);padding-top:8px}
+.ntprev{font-size:15px;line-height:1.35;color:var(--text);cursor:pointer;margin-bottom:6px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ntprev b{color:var(--bad)}
+.copybtn.quiet{display:block;width:auto;margin:0 0 6px auto;padding:0 12px;min-height:44px;
+  font-size:13px;background:transparent;border:0;color:var(--accent)}
+.opcd summary{cursor:pointer;color:var(--warn);font-weight:600;min-height:44px;display:flex;align-items:center}
+.opcl{padding:0 0 8px}
+.appinfo{margin:18px 0 6px;text-align:center}
+.appinfo summary{cursor:pointer;color:var(--faint);font-size:12px;min-height:44px;
+  display:flex;align-items:center;justify-content:center}
 .ntform{margin-bottom:12px}
 .ntext{display:block;width:100%;min-height:86px;resize:vertical;border:1px solid var(--line);
   border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-size:16px;
@@ -1248,7 +1267,7 @@ main{flex:1;padding:10px 12px 40px}
 .ntwarn{margin:0 0 12px;padding:10px 13px;border:1px solid var(--warn);border-radius:12px;
   background:rgba(247,190,74,.13);font-size:13px;line-height:1.45}
 .clbtn{flex:0 0 auto;border:1px solid var(--line);background:var(--panel2);
-  color:var(--text);border-radius:9px;padding:7px 12px;font-size:13px;
+  color:var(--text);border-radius:10px;padding:0 14px;min-height:44px;font-size:14px;
   font-weight:600;cursor:pointer}
 .clbtn:active{background:var(--line)}
 .t-Shuttle{background:rgba(63,203,126,.14);color:var(--shuttle)}
@@ -1256,12 +1275,12 @@ main{flex:1;padding:10px 12px 40px}
 
 /* status badges */
 .badge{display:inline-flex;align-items:center;gap:6px;border-radius:7px;
-  padding:5px 9px;font-size:12px;font-weight:700}
+  padding:6px 10px;font-size:14px;font-weight:700}
 .b-ok{background:rgba(63,203,126,.12);color:var(--ok)}
 .b-warn{background:rgba(245,185,66,.14);color:var(--warn)}
 .b-bad{background:rgba(255,93,93,.14);color:var(--bad)}
 .b-na{background:var(--panel2);color:var(--faint)}
-.badge b{font-weight:800}
+.badge b{font-weight:800;font-size:15px;letter-spacing:.03em}
 
 /* detail */
 .dhead{background:var(--panel);border:1px solid var(--line);border-radius:14px;
@@ -1297,7 +1316,7 @@ a.tel{color:var(--accent);text-decoration:none}
 .fchips{display:flex;flex-wrap:wrap;gap:6px;padding:2px 0 10px}
 .fchip{flex:0 1 auto;max-width:100%;border:1px solid var(--line);background:var(--panel);
   color:var(--dim);border-radius:20px;padding:7px 13px;font-size:13px;line-height:1.2;
-  font-weight:600;cursor:pointer;white-space:normal;text-align:center;min-height:34px;
+  font-weight:600;cursor:pointer;white-space:normal;text-align:center;min-height:44px;
   display:inline-flex;align-items:center;justify-content:center}
 .fchip.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .browsebar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
@@ -1307,7 +1326,7 @@ a.tel{color:var(--accent);text-decoration:none}
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 2l5 5 5-5' fill='none' stroke='%2371808F' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:right 11px center;background-size:11px 7px}
 .cardbadges{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
-.cardbadges .badge{padding:3px 7px;font-size:11px}
+.cardbadges .badge{padding:3px 8px;font-size:12px}
 .copybtn{display:block;width:100%;padding:13px;border-radius:12px;
   border:1px solid var(--line);background:var(--panel);color:var(--accent);
   font-size:15px;font-weight:700;margin-bottom:10px;cursor:pointer}
@@ -1478,8 +1497,8 @@ function opLink(j){
     (o["Licence Number"]?' ('+esc(o["Licence Number"])+')':'')+' &#8250;</span>';
 }
 function opcNote(c){
-  return '<span class="empty">Possible match \u2014 '+c.length+' operators share this name, verify manually:</span><br>'+
-    c.map(opLink).join("<br>");
+  return '<details class="opcd"><summary>Possible match \u2014 '+c.length+' operators share this name</summary>'+
+    '<div class="opcl"><span class="empty">Verify manually:</span><br>'+c.map(opLink).join("<br>")+'</div></details>';
 }
 function opcText(c){
   return "POSSIBLE OWNER-OPERATOR \u2014 "+c.length+" operators share this name, verify: "+
@@ -1959,9 +1978,13 @@ function ntBar(key){
   var s=ntStat(key), cls="ntbar"+(s.open?" ntbar-act":(s.n?" ntbar-has":""));
   var line=s.n?('<b>'+s.n+' note'+(s.n===1?'':'s')+'</b>'+
       (s.open?' · <b class="ntopen">'+s.open+' need'+(s.open===1?'s':'')+' action</b>':'')):'No notes yet';
-  return '<div class="'+cls+'"><span class="cllabel">Notes</span><span class="clline">'+line+'</span>'+
+  var openN=(nIndex()[key]||[]).filter(function(n){return n.action&&!n.done&&!n.removed;});
+  var prev=openN.length?'<div class="ntprevs" onclick="ntJump(0)">'+openN.slice(0,2).map(function(n){
+      return '<div class="ntprev"><b>'+esc(n.by||"")+':</b> '+esc(n.body)+'</div>';}).join("")+
+    (openN.length>2?'<div class="faintx">+'+(openN.length-2)+' more needing action</div>':'')+'</div>':'';
+  return '<div class="'+cls+' joined"><span class="cllabel">Notes</span><span class="clline">'+line+'</span>'+
     (s.n?'<button class="clbtn" onclick="ntJump(0)">Read</button>':'')+
-    '<button class="clbtn" onclick="ntJump(1)">Add note</button></div>';
+    '<button class="clbtn" onclick="ntJump(1)">Add note</button>'+prev+'</div>';
 }
 var NT_EDIT="", NT_SHOW={}, NT_HIST={};
 function ntFind(id){
@@ -2239,7 +2262,7 @@ function clPanel(s,handler){
     link=' <span class="link chlink" onclick="chToggle('+n+')">'+(CH_OPEN[s.k]?'Hide':'History ('+l.length+')')+'</span>';
     blk=chBlock(s,n,l);
   }
-  return '<div class="clpanel'+((s.checked&&clDays(s.checked)<14)?' clrecent':'')+'">'+
+  return '<div class="clpanel'+((s.checked&&clDays(s.checked)<14)?' clrecent':'')+(shOn()?' joined':'')+'">'+
     '<span class="cllabel">Check history</span>'+
     '<span class="clline">'+line+link+'</span>'+
     '<button class="clbtn" onclick="'+handler+'">'+(s.checked?'Mark again':'Mark as checked')+'</button>'+
@@ -2360,7 +2383,7 @@ function opFlagList(o,soon){
   chkInto(out,soon,"nsdl","NS DL",o["NSDLExpired Date"]);
   return out;
 }
-const FILTERS=[["all","All"],["permit","PVH License"],["ins","Insurance"],["vlic","NS Permit"],
+const FILTERS=[["all","All"],["veh","Vehicles"],["ops","Operators"],["permit","PVH License"],["ins","Insurance"],["vlic","NS Permit"],
   ["mvi","MVI"],["olic","Op licence"],["nsdl","NS DL"],["inactive","Inactive"]];
 function buildFlagged(soon){
   const vi=[],oi=[];
@@ -2375,14 +2398,28 @@ function flagBadges(f){
     return '<span class="badge b-bad">'+x.label+(x.over>0?' '+x.over+'d over':'')+'</span>';
   }).join("")+'</div>';
 }
+/* Long lists draw a page at a time. A common surname or the flagged list can be
+   hundreds of cards, which is slow to draw and a long way to scroll. */
+var LIM={}, PAGE=25;
+function pg(id,arr,fn){
+  var n=LIM[id]||PAGE, h=arr.slice(0,n).map(fn).join("");
+  if(arr.length>n){
+    var left=arr.length-n, step=Math.min(50,left);
+    h+='<button class="copybtn" onclick="pgMore(\''+id+'\')">Show '+step+' more'+(left>step?' ('+left+' left)':'')+'</button>';
+  }
+  return h;
+}
+function pgMore(id){LIM[id]=(LIM[id]||PAGE)+50; keepScroll();}
 function renderFlags(fk,soon){
   fk=fk||"all";
   const all=buildFlagged(soon);
-  const cnt={all:all.vi.length+all.oi.length};
+  const cnt={all:all.vi.length+all.oi.length,veh:all.vi.length,ops:all.oi.length};
   for(const[,f]of all.vi)for(const x of f)cnt[x.k]=(cnt[x.k]||0)+1;
   for(const[,f]of all.oi)for(const x of f)cnt[x.k]=(cnt[x.k]||0)+1;
   let vshow=all.vi,oshow=all.oi;
-  if(fk!=="all"){
+  if(fk==="veh")oshow=[];
+  else if(fk==="ops")vshow=[];
+  else if(fk!=="all"){
     vshow=all.vi.filter(([,f])=>f.some(x=>x.k===fk)).map(([v,f])=>[v,f.filter(x=>x.k===fk)]);
     oshow=all.oi.filter(([,f])=>f.some(x=>x.k===fk)).map(([o,f])=>[o,f.filter(x=>x.k===fk)]);
   }
@@ -2394,9 +2431,9 @@ function renderFlags(fk,soon){
     ' \u00B7 '+(cnt[k]||0)+'</div>').join("")+
     '<div class="fchip'+(soon?" on":"")+'" onclick="go(\'flags/'+fk+(soon?"":"/soon")+'\')">\u226430d '+(soon?"ON":"OFF")+'</div></div>';
   if(vshow.length)h+='<div class="seclabel">Vehicles ('+vshow.length+')</div>'+
-    vshow.map(([v,f])=>vehCard(v,flagBadges(f))).join("");
+    pg("fv"+fk+(soon?"s":""),vshow,([v,f])=>vehCard(v,flagBadges(f)));
   if(oshow.length)h+='<div class="seclabel">Operators ('+oshow.length+')</div>'+
-    oshow.map(([o,f])=>opCard(o,flagBadges(f))).join("");
+    pg("fo"+fk+(soon?"s":""),oshow,([o,f])=>opCard(o,flagBadges(f)));
   if(!vshow.length&&!oshow.length)h+='<div class="hint">Nothing flagged in this category.</div>';
   main.innerHTML=h;
 }
@@ -2497,22 +2534,30 @@ function renderHome(q){
     main.innerHTML='<div class="hint">Search by deck light number, plate, owner or operator name, business or licence number.</div>'+
       '<div class="browsebar">'+selectEl("fType",TYPE_OPTS,HFILTER.type)+selectEl("fStat",STAT_OPTS,HFILTER.stat)+'</div>'+
       actionCard()+
-      (n?'<div class="card" onclick="go(\'flags\')">'+
+      (fl.vi.length?'<div class="card" onclick="go(\'flags/veh\')">'+
         '<div class="opdot" style="color:var(--bad);border-color:var(--bad)">&#9888;</div>'+
-        '<div class="cmain"><div class="cname">'+n+' flagged records</div>'+
-        '<div class="csub">Expired or missing: PVH licences, insurance, NS Permits, MVI \u00B7 inactive operators</div></div>'+
+        '<div class="cmain"><div class="cname">'+fl.vi.length+' vehicle'+(fl.vi.length===1?'':'s')+' flagged</div>'+
+        '<div class="csub">PVH licence, insurance, NS Permit or MVI expired or missing</div></div>'+
         '<div class="chev">&#8250;</div></div>':'')+
       '<div class="fchips" style="margin-top:8px">'+shortcut("permit","PVH Licenses")+shortcut("ins","Insurance")+
         shortcut("mvi","MVI")+shortcut("vlic","NS Permit")+'</div>'+
+      (fl.oi.length?'<div class="card" onclick="go(\'flags/ops\')">'+
+        '<div class="opdot" style="color:var(--bad);border-color:var(--bad)">&#9888;</div>'+
+        '<div class="cmain"><div class="cname">'+fl.oi.length+' operator'+(fl.oi.length===1?'':'s')+' flagged</div>'+
+        '<div class="csub">Operator or NS licence expired · inactive operators</div></div>'+
+        '<div class="chev">&#8250;</div></div>':'')+
       recentCards()+
       checkedCards()+
-      '<div class="counts">'+DB.counts.vehicles+' active vehicles \u00B7 '+DB.counts.operators+' active operators \u00B7 '+(DB.counts.owners||0)+' owners</div>'+
-      '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+
-        '<br>App version '+APP_VERSION+'</div>'+shLine()+
-      (window.__SHELL__?'<div class="hint">'+(window.__syncLine?window.__syncLine():'')+
-        '<span class="link" onclick="window.__checkNow()">Check for new data</span> \u00B7 '+
-        '<span class="link" onclick="window.__datasrc()">Data source\u2026</span> \u00B7 '+
-        '<span class="link" onclick="window.__reimport()">Load a file\u2026</span></div>':'');
+      shLine()+
+      '<details class="appinfo"><summary>App '+esc(APP_VERSION)+' · data built '+esc(DB.built)+'</summary>'+
+        '<div class="counts">'+DB.counts.vehicles+' active vehicles · '+DB.counts.operators+' active operators · '+(DB.counts.owners||0)+' owners</div>'+
+        '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+
+          '<br>App version '+APP_VERSION+'</div>'+
+        (window.__SHELL__?'<div class="hint">'+(window.__syncLine?window.__syncLine():'')+
+          '<span class="link" onclick="window.__checkNow()">Check for new data</span> · '+
+          '<span class="link" onclick="window.__datasrc()">Data source…</span> · '+
+          '<span class="link" onclick="window.__reimport()">Load a file…</span></div>':'')+
+      '</details>';
     wireFilters();
     return;
   }
@@ -2522,11 +2567,11 @@ function renderHome(q){
   const oInResult=new Set(r.o.map(o=>o._i));
   const pairedOps=new Set();
   r.w.forEach(w=>{if(w._op!=null&&oInResult.has(w._op))pairedOps.add(w._op);});
-  if(r.v.length){h+='<div class="seclabel">Vehicles ('+r.v.length+')</div>'+r.v.map(v=>vehCard(v)).join("");}
+  if(r.v.length){h+='<div class="seclabel">Vehicles ('+r.v.length+')</div>'+pg("sv",r.v,v=>vehCard(v));}
   if(r.w.length){h+='<div class="seclabel">Owners ('+r.w.length+')</div>'+
-    r.w.map(w=>ownerCard(w,(w._op!=null&&oInResult.has(w._op))?pairNote("\u2193","Operators"):"")).join("");}
+    pg("sw",r.w,w=>ownerCard(w,(w._op!=null&&oInResult.has(w._op))?pairNote("\u2193","Operators"):""));}
   if(r.o.length){h+='<div class="seclabel">Operators ('+r.o.length+')</div>'+
-    r.o.map(o=>opCard(o,pairedOps.has(o._i)?pairNote("\u2191","Owners"):"")).join("");}
+    pg("so",r.o,o=>opCard(o,pairedOps.has(o._i)?pairNote("\u2191","Owners"):""));}
   if(!r.v.length&&!r.o.length&&!r.w.length){
     // U4: absence-as-signal
     const aq=alnum(q); const looksPlate=aq.length>=2&&aq.length<=8&&/[0-9]/.test(aq)&&/^[A-Z0-9]+$/.test(aq);
@@ -2614,7 +2659,7 @@ function renderVehicle(i){
     '</div></div>';
   h+=clPanel(priorV,"markCheckedV("+i+")");
   h+=ntBar(clKeyV(v));
-  h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
+  h+='<button class="copybtn quiet" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
     (owner&&owner._op!=null?row("Owner-Operator",opLink(owner._op)):"")+
@@ -2667,7 +2712,7 @@ function renderOperator(i){
     .filter(Boolean).map(esc).join("<br>");
   h+=clPanel(prior,"markChecked("+i+")");
   h+=ntBar(clKey(o));
-  h+='<button class="copybtn" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
+  h+='<button class="copybtn quiet" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Address",addr||"\u2014")+
     row("Phone",telLink(o["Phone"]))+
@@ -2707,7 +2752,7 @@ function renderOwner(i){
     '</div></div></div></div>';
   h+=clPanel(priorW,"markCheckedW("+i+")");
   h+=ntBar(nkW(w));
-  h+='<button class="copybtn" onclick="copyRec(\'w\','+i+',this)">Copy record summary</button>';
+  h+='<button class="copybtn quiet" onclick="copyRec(\'w\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Owner ID",dash(w["Owner ID"]))+
     row("Address",dash(w["Owner Address"]))+
@@ -2744,6 +2789,7 @@ document.getElementById("theme").addEventListener("click",()=>{
   document.getElementById("theme").innerHTML=light?"&#9789;":"&#9788;";
 });
 q.addEventListener("input",()=>{
+  LIM={};
   clr.style.display=q.value?"block":"none";
   if(location.hash && location.hash!=="#/") history.replaceState(null,"","#/");
   renderHome(q.value);
@@ -2752,7 +2798,7 @@ clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
 window.markChecked=markChecked;window.markCheckedV=markCheckedV;
 window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
-window.ntShow=ntShow;window.ntDismiss=ntDismiss;window.ntHist=ntHist;window.ntEdit=ntEdit;window.ntEditCancel=ntEditCancel;
+window.pgMore=pgMore;window.ntShow=ntShow;window.ntDismiss=ntDismiss;window.ntHist=ntHist;window.ntEdit=ntEdit;window.ntEditCancel=ntEditCancel;
 window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
 window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
 window.__route=route;
