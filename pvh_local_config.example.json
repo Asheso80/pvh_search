@@ -2,5 +2,7 @@
   "_comment": "Copy to pvh_local_config.json and fill in. Machine-specific; the filled-in copy is gitignored and must stay that way.",
   "server": "your-ssrs-hostname",
   "folder_path": "/YourReportFolder",
-  "dropbox_target": "C:\\Users\\<you>\\Dropbox\\PVH_data.json"
+  "dropbox_target": "C:\\Users\\<you>\\Dropbox\\PVH_data.json",
+  "supabase_url": "https://your-project.supabase.co",
+  "supabase_anon_key": "the anon / publishable key (NOT service_role) -- see supabase/SETUP.md"
 }
