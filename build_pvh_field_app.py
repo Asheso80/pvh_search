@@ -427,6 +427,11 @@ def shared_config():
     except (OSError, ValueError):
         return None
     url = str(cfg.get("supabase_url", "")).strip().rstrip("/")
+    # The dashboard hands out the REST address (".../rest/v1/"); the app adds
+    # that part itself, so keep only the project's base address.
+    for tail in ("/rest/v1", "/auth/v1"):
+        if url.endswith(tail):
+            url = url[: -len(tail)]
     key = str(cfg.get("supabase_anon_key", "")).strip()
     if not url and not key:
         return None
