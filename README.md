@@ -112,6 +112,9 @@ stay on the device.
   the record on a home-screen list.
 - Author and time are stamped by the database from the officer's sign-in, not by
   the app.
+- An officer can edit or remove their own notes, never anyone else's. Nothing is
+  overwritten or erased: edits keep the earlier wording, and a removed note stays on
+  file showing who removed it and when, with the original a tap away.
 - Offline: the last shared copy is kept on the device, and anything written or
   marked without a signal waits in an outbox and is sent when there is one.
 - It is off unless `supabase_url` and `supabase_anon_key` are in
