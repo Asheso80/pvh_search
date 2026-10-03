@@ -98,6 +98,32 @@ work — a `file://` page cannot register a service worker.
 
 ---
 
+## Shared notes and checks
+
+Officers can write a note on any vehicle, owner or operator record, and mark an
+action as needed or done. Deliberate "Checked" marks are shared too, so the check
+history shows who checked a record and when. Both live in a Supabase project;
+**nothing else is shared** -- the records, search, and the passing "seen" history
+stay on the device.
+
+- A note appears only on the record it was written on, never on a related record.
+- A record with notes shows an amber **NOTES n** chip in search results and a strip
+  on the record; an unresolved action turns both red (**ACTION NEEDED**) and puts
+  the record on a home-screen list.
+- Author and time are stamped by the database from the officer's sign-in, not by
+  the app.
+- Offline: the last shared copy is kept on the device, and anything written or
+  marked without a signal waits in an outbox and is sent when there is one.
+- It is off unless `supabase_url` and `supabase_anon_key` are in
+  `pvh_local_config.json`. They travel in `PVH_data.json`, never in `docs/`.
+
+Setup (database, access rules, adding officers): `supabase/SETUP.md`.
+
+Each device holds a copy of the shared notes while signed in, in addition to the
+records. Signing out removes it.
+
+---
+
 ## What the app shows
 
 Where each status badge comes from in the source export:

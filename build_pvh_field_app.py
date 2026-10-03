@@ -410,6 +410,52 @@ def lev1(a, b):
     return edits + (la - i) + (lb - j) <= 1
 
 
+def shared_config():
+    """Connection details for the shared notes backend, or None.
+
+    Read from pvh_local_config.json (gitignored) and carried to devices inside
+    PVH_data.json -- the private data file -- rather than baked into the
+    published app, so the public repo never names the project. The key is the
+    public "anon" key, which is meant to be visible to clients; the database's
+    access rules are what protect the data. A service_role key here would hand
+    every device full control, so anything that looks like one is refused.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pvh_local_config.json")
+    try:
+        with io.open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except OSError:
+        return None
+    except ValueError as exc:
+        print("WARNING: pvh_local_config.json is not valid JSON (" + str(exc) + ") -- "
+              "shared notes left OFF. Check for a missing or trailing comma.")
+        return None
+    url = str(cfg.get("supabase_url", "")).strip().rstrip("/")
+    # The dashboard hands out the REST address (".../rest/v1/"); the app adds
+    # that part itself, so keep only the project's base address.
+    for tail in ("/rest/v1", "/auth/v1"):
+        if url.endswith(tail):
+            url = url[: -len(tail)]
+    key = str(cfg.get("supabase_anon_key", "")).strip()
+    if not url and not key:
+        return None
+    if not (url.startswith("https://") and key):
+        print("WARNING: supabase_url / supabase_anon_key in pvh_local_config.json are "
+              "incomplete (need an https:// URL and a key) -- shared notes left OFF.")
+        return None
+    try:
+        import base64
+        seg = key.split(".")[1]
+        role = json.loads(base64.urlsafe_b64decode(seg + "=" * (-len(seg) % 4))).get("role")
+    except Exception:
+        role = None
+    if role == "service_role" or key.startswith("sb_secret_"):
+        sys.exit("supabase_anon_key is a SECRET key. That key bypasses every access rule and "
+                 "must never reach a device. Use the anon / publishable key.")
+    print("Shared notes: ON (" + url + ")")
+    return {"url": url, "key": key}
+
+
 def main():
     vehicles = load(VEH_FILE, "Vehicle Type", VEH_FIELDS, VEH_DATES)
     operators = load(OP_FILE, "Operator Type", OP_FIELDS, OP_DATES)
@@ -480,6 +526,9 @@ def main():
         "operators": operators,
         "owners": owners,
     }
+    shared = shared_config()
+    if shared:
+        data["shared"] = shared
     payload_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     # Escape "</" so the JSON can never terminate the script tag.
     payload = payload_json.replace("</", "<\\/")
@@ -1156,6 +1205,35 @@ main{flex:1;padding:10px 12px 40px}
   color:var(--faint);flex:0 0 auto}
 .clline{flex:1 1 120px;color:var(--text)}
 .clpanel.clrecent .clline{color:var(--accent)}
+/* shared notes */
+.nt{background:rgba(247,190,74,.2);color:var(--warn)}
+.ntact{background:var(--bad);color:#fff}
+.ntdone{background:var(--panel2);color:var(--ok)}
+.ntbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0;
+  padding:10px 13px;border:1px solid var(--line);border-radius:12px;
+  background:var(--panel);font-size:13px}
+.ntbar-has{border-color:rgba(247,190,74,.75);background:rgba(247,190,74,.13)}
+.ntbar-act{border-color:var(--bad);background:rgba(255,99,99,.13)}
+.ntopen{color:var(--bad)}
+.ntform{margin-bottom:12px}
+.ntext{display:block;width:100%;min-height:86px;resize:vertical;border:1px solid var(--line);
+  border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-size:16px;
+  line-height:1.4;padding:10px 12px;outline:none}
+.ntext:focus{border-color:var(--accent)}
+.ntchk{display:flex;align-items:center;gap:8px;margin:9px 2px 11px;font-size:14px}
+.ntchk input{width:20px;height:20px}
+.ntitem{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:11px 13px;margin-bottom:9px}
+.ntitem-act{border-color:var(--bad)}
+.nthead{display:flex;justify-content:space-between;gap:10px;font-size:12px;
+  color:var(--faint);margin-bottom:5px}
+.nthead b{color:var(--text);font-size:13px}
+.ntbody{white-space:pre-wrap;word-break:break-word;font-size:15px;line-height:1.4}
+.ntfoot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}
+.ntfoot .clbtn{margin-left:auto}
+.faintx{color:var(--faint);font-size:12px}
+.ntwarn{margin:0 0 12px;padding:10px 13px;border:1px solid var(--warn);border-radius:12px;
+  background:rgba(247,190,74,.13);font-size:13px;line-height:1.45}
 .clbtn{flex:0 0 auto;border:1px solid var(--line);background:var(--panel2);
   color:var(--text);border-radius:9px;padding:7px 12px;font-size:13px;
   font-weight:600;cursor:pointer}
@@ -1400,7 +1478,7 @@ function vehCard(v,extra){
     '<div class="cmain"><div class="cname">'+esc(v["Make Model"]||"Vehicle")+
     (v["Vehicle Color"]?' \u00B7 '+esc(v["Vehicle Color"]):'')+'</div>'+
     '<div class="csub">'+esc(ownerName(v))+(v["Business Name"]?' \u00B7 '+esc(v["Business Name"]):'')+'</div>'+
-    '<div class="crow2"><span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span>'+
+    '<div class="crow2">'+ntChip(clKeyV(v))+'<span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span>'+
     (v["Plate No"]?'<span class="plate">'+esc(v["Plate No"])+'</span>':'')+
     clChipsV(v)+
     '</div>'+(extra||'')+'</div><div class="chev">&#8250;</div></div>';
@@ -1458,14 +1536,25 @@ function clSave(){
   }
   try{localStorage.setItem(CLOG_KEY,JSON.stringify(m));}catch(e){}
 }
+/* "Seen" is this device's alone. "Checked" is the later of this device's mark
+   and the shared one from the other officers, with the name of whoever made
+   it. */
 function clGetK(k){
-  var e=clLoad()[k];
-  return {seen:(e&&e[0])||0, checked:(e&&e[1])||0};
+  var e=clLoad()[k], sh=SC.checks[k];
+  var lc=(e&&e[1])||0, st=(sh&&sh.t)||0, by="";
+  if(st&&st>=lc)by=sh.by||"";
+  else if(lc)by=(AU&&AU.name)||"";
+  return {seen:(e&&e[0])||0, checked:Math.max(lc,st), by:by};
 }
-function clMarkK(k,deliberate){
+function clMarkK(k,deliberate,label){
   var m=clLoad(), e=m[k]||[0,0];
   e[deliberate?1:0]=Math.floor(Date.now()/1000);
   m[k]=e; clSave();
+  if(deliberate&&shOn()&&AU){
+    OB.push({type:"check",row:{id:uid(),rec_key:k,rec_label:String(label||"").slice(0,200),
+      written_at:new Date().toISOString()}});
+    obSave(); shSync(true);
+  }
 }
 /* An owner and an operator record can be the same human -- 164 of 200 owners
    link to one. Where they do, the owner's history IS the driver's history, so
@@ -1478,15 +1567,20 @@ function clMarkK(k,deliberate){
    vehicle history stays separate from everyone's. */
 function clKeyW(w){
   if(w._op!=null&&O[w._op])return clKey(O[w._op]);
+  return nkW(w);
+}
+/* The owner's own key, never the operator's. Notes use this directly so a note
+   on an owner stays on the owner even when the same person is also an operator. */
+function nkW(w){
   var id=String(w["Owner ID"]==null?"":w["Owner ID"]).trim();
   var nm=String((w["Owner Last Name"]||"")+(w["Owner First Name"]||"")+(w["Business Name"]||""))
            .toUpperCase().replace(/[^A-Z0-9]/g,"");
   return "w:"+id+"|"+nm;
 }
 function clGet(o){return clGetK(clKey(o));}
-function clMark(o,deliberate){clMarkK(clKey(o),deliberate);}
+function clMark(o,deliberate){clMarkK(clKey(o),deliberate,opName(o));}
 function clGetV(v){return clGetK(clKeyV(v));}
-function clMarkV(v,deliberate){clMarkK(clKeyV(v),deliberate);}
+function clMarkV(v,deliberate){clMarkK(clKeyV(v),deliberate,vehLabel(v));}
 function clDays(ts){return Math.floor((Date.now()/1000-ts)/86400);}
 function clAgo(ts){
   if(!ts)return "";
@@ -1512,8 +1606,447 @@ function clChipsFor(s){
 function clChips(o){return clChipsFor(clGet(o));}
 function clChipsV(v){return clChipsFor(clGetV(v));}
 function clGetW(w){return clGetK(clKeyW(w));}
-function clMarkW(w,deliberate){clMarkK(clKeyW(w),deliberate);}
+function clMarkW(w,deliberate){clMarkK(clKeyW(w),deliberate,ownerName(w));}
 function clChipsW(w){return clChipsFor(clGetW(w));}
+
+/* ---------- Shared notes and checks ----------
+   Notes written on a record, and deliberate "Checked" marks, are shared
+   between officers through a Supabase project. Everything else -- search,
+   the records, the passing "seen" history -- stays on the device.
+
+   Offline first, same rule as the rest of the app. Reads come from a copy kept
+   on the device; anything an officer writes goes into an outbox on the device
+   first and is sent whenever there is a signal and a valid sign-in. Nothing the
+   officer does waits on the network.
+
+   What is trusted where. The database stamps the author and the receive time
+   itself (see supabase/schema.sql); the app only supplies when the officer
+   wrote it, which the database clamps to "not in the future". So a note always
+   carries the signed-in officer's real name, whatever this code sends.
+
+   Notes are keyed per record and are NOT merged across an owner and the
+   operator who is the same person -- a note appears only where it was written.
+   Check history is the opposite on purpose (see clKeyW). The keys are the same
+   stable identifiers the check history uses, never array positions, which
+   shift on every rebuild. */
+var SH=(DB.shared&&DB.shared.url&&DB.shared.key)?DB.shared:null;
+var SC_KEY="pvh_shared_cache", OB_KEY="pvh_outbox", AU_KEY="pvh_auth";
+function jget(k,d){try{var r=localStorage.getItem(k);return r?JSON.parse(r):d;}catch(e){return d;}}
+function jset(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
+function emptySC(){return {notes:{},checks:{},nSince:"",cSince:"",at:0};}
+var SC=jget(SC_KEY,null);
+if(!SC||typeof SC!=="object"||!SC.notes||!SC.checks)SC=emptySC();
+var OB=jget(OB_KEY,[]); if(!Array.isArray(OB))OB=[];
+var AU=jget(AU_KEY,null);
+var SYNC={busy:false,err:"",lastTry:0};
+var NIDX=null;
+function shOn(){return !!SH;}
+function shSigned(){return !!(AU&&AU.refresh);}
+function scSave(){
+  var cut=Date.now()/1000-CLOG_DAYS*86400;
+  Object.keys(SC.checks).forEach(function(k){if((SC.checks[k].t||0)<cut)delete SC.checks[k];});
+  NIDX=null; jset(SC_KEY,SC);
+}
+function obSave(){
+  NIDX=null;
+  if(!jset(OB_KEY,OB))alert("This device is out of storage, so that could not be saved. Free some space and try again.");
+}
+function auSave(){jset(AU_KEY,AU);}
+function tsParse(s){
+  /* Safari is strict about fractional seconds beyond milliseconds, which
+     Postgres sends as microseconds. */
+  var t=Date.parse(String(s||"").replace(/(\.\d{3})\d+/,"$1"));
+  return isNaN(t)?0:t/1000;
+}
+function uid(){
+  if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();
+  var b=new Uint8Array(16);
+  if(window.crypto&&crypto.getRandomValues)crypto.getRandomValues(b);
+  else for(var i=0;i<16;i++)b[i]=Math.random()*256;
+  b[6]=(b[6]&15)|64; b[8]=(b[8]&63)|128;
+  var h=Array.prototype.map.call(b,function(x){return (x+256).toString(16).slice(1);}).join("");
+  return h.slice(0,8)+"-"+h.slice(8,12)+"-"+h.slice(12,16)+"-"+h.slice(16,20)+"-"+h.slice(20);
+}
+
+/* --- network. Only a signed-in user's token is ever sent as Authorization;
+   the public key goes in apikey alone, which is what the newer publishable
+   keys require. A reject with {net:true} means no usable connection. */
+function shHttp(method,path,body,token,prefer){
+  var h={"apikey":SH.key,"Content-Type":"application/json"};
+  if(token)h.Authorization="Bearer "+token;
+  if(prefer)h.Prefer=prefer;
+  return fetch(SH.url+path,{method:method,headers:h,cache:"no-store",
+      body:body==null?undefined:JSON.stringify(body)})
+    .then(function(r){
+      return r.text().then(function(t){
+        var j=null; try{j=t?JSON.parse(t):null;}catch(e){}
+        return {status:r.status,json:j};
+      });
+    },function(){throw {net:true};});
+}
+var REFRESHING=null;
+function shRefresh(){
+  if(REFRESHING)return REFRESHING;
+  REFRESHING=shHttp("POST","/auth/v1/token?grant_type=refresh_token",{refresh_token:AU.refresh}).then(function(r){
+    REFRESHING=null;
+    if(r.status===200&&r.json&&r.json.access_token){
+      AU.access=r.json.access_token; AU.refresh=r.json.refresh_token||AU.refresh;
+      AU.exp=Math.floor(Date.now()/1000)+(r.json.expires_in||3600); AU.dead=false; auSave();
+      return true;
+    }
+    if(r.status>=400&&r.status<500&&r.status!==408&&r.status!==429){AU.dead=true; auSave(); return false;}
+    throw {net:true};
+  },function(e){REFRESHING=null; throw e;});
+  return REFRESHING;
+}
+function shApi(method,path,body,prefer){
+  if(!AU||AU.dead)return Promise.reject({auth:true});
+  function go(){return shHttp(method,path,body,AU.access,prefer);}
+  var pre=((AU.exp||0)-60<Date.now()/1000)?shRefresh():Promise.resolve(true);
+  return pre.then(function(ok){
+    if(!ok)throw {auth:true};
+    return go();
+  }).then(function(r){
+    if(r.status!==401)return r;
+    return shRefresh().then(function(ok){if(!ok)throw {auth:true}; return go();});
+  });
+}
+function shSignIn(email,pw){
+  return shHttp("POST","/auth/v1/token?grant_type=password",{email:email,password:pw}).then(function(r){
+    if(r.status!==200||!r.json||!r.json.access_token){
+      var m=(r.json&&(r.json.error_description||r.json.msg||r.json.message))||("HTTP "+r.status);
+      throw new Error(/invalid|credentials/i.test(m)?"Email or password not recognised.":m);
+    }
+    var a={access:r.json.access_token,refresh:r.json.refresh_token,
+           exp:Math.floor(Date.now()/1000)+(r.json.expires_in||3600),
+           uid:r.json.user&&r.json.user.id,email:email,name:""};
+    return shHttp("GET","/rest/v1/profiles?select=display_name&id=eq."+encodeURIComponent(a.uid),null,a.access).then(function(p){
+      if(p.status!==200||!p.json||!p.json.length)
+        throw new Error("Signed in, but this account has not been enabled for PVH notes. Ask the administrator.");
+      a.name=p.json[0].display_name;
+      return a;
+    });
+  });
+}
+
+/* --- outbox. Ops: note, check, done. Safe to retry: every insert carries a
+   client-made id, and a duplicate (409) means it already arrived. */
+function shFlush(){
+  var i=0;
+  function next(){
+    while(i<OB.length&&OB[i].failed)i++;
+    if(i>=OB.length)return Promise.resolve();
+    var op=OB[i], req;
+    if(op.type==="note")req=shApi("POST","/rest/v1/notes",op.row,"return=minimal");
+    else if(op.type==="check")req=shApi("POST","/rest/v1/checks",op.row,"return=minimal");
+    else req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
+      {done_at:op.done?new Date(op.at*1000).toISOString():null},"return=minimal");
+    return req.then(function(r){
+      if((r.status>=200&&r.status<300)||r.status===409){OB.splice(i,1); obSave(); return next();}
+      if(r.status===401||r.status===403)throw {auth:true,refused:true};
+      if(r.status>=500||r.status===408||r.status===429)throw {net:true};
+      op.failed=(r.json&&(r.json.message||r.json.hint))||("HTTP "+r.status);
+      obSave(); i++; return next();
+    });
+  }
+  return next();
+}
+
+/* --- pull. Incremental by a server timestamp, a page at a time. The boundary
+   row is fetched again each round (gte), which is harmless because rows are
+   merged by id / record key. */
+var CHG=false;
+function pullPages(table,col,since,take){
+  function page(s){
+    return shApi("GET","/rest/v1/"+table+"?select=*&order="+col+".asc&limit=1000&"+col+"=gte."+encodeURIComponent(s))
+      .then(function(r){
+        if(r.status===401||r.status===403)throw {auth:true,refused:true};
+        if(r.status!==200||!Array.isArray(r.json))throw new Error("The server answered HTTP "+r.status+".");
+        var rows=r.json;
+        if(!rows.length)return s;
+        take(rows);
+        var last=rows[rows.length-1][col];
+        if(rows.length<1000||last===s)return last;
+        return page(last);
+      });
+  }
+  return page(since);
+}
+function pullNotes(){
+  return pullPages("notes","updated_at",SC.nSince||"1970-01-01T00:00:00Z",function(rows){
+    rows.forEach(function(n){
+      var c=SC.notes[n.id];
+      if(!c||c.updated_at!==n.updated_at)CHG=true;
+      SC.notes[n.id]=n;
+    });
+  }).then(function(s){SC.nSince=s;});
+}
+function pullChecks(){
+  var since=SC.cSince||new Date(Date.now()-CLOG_DAYS*864e5).toISOString();
+  return pullPages("checks","created_at",since,function(rows){
+    rows.forEach(function(c){
+      var t=tsParse(c.written_at), cur=SC.checks[c.rec_key];
+      if(!cur||t>cur.t){SC.checks[c.rec_key]={t:t,by:c.author_name||""}; CHG=true;}
+    });
+  }).then(function(s){SC.cSince=s;});
+}
+function typing(){
+  var a=document.activeElement, id=a&&a.id;
+  if(id==="ntbody"||id==="shem"||id==="shpw")return true;
+  var t=document.getElementById("ntbody");
+  return !!(t&&t.value);
+}
+function keepScroll(){var y=window.scrollY; route(); window.scrollTo(0,y);}
+function shSync(force){
+  if(!shOn()||!shSigned()||SYNC.busy)return Promise.resolve();
+  if(!force&&Date.now()-SYNC.lastTry<20000)return Promise.resolve();
+  SYNC.busy=true; SYNC.lastTry=Date.now(); CHG=false;
+  return shFlush().then(pullNotes).then(pullChecks).then(function(){
+    SYNC.err=""; SC.at=Math.floor(Date.now()/1000); scSave();
+  }).catch(function(e){
+    if(e&&e.auth)SYNC.err=(AU&&AU.dead)?"Signed out — sign in again to send and receive.":
+      "The server refused this account. Ask the administrator.";
+    else if(e&&e.net)SYNC.err="No signal — will retry.";
+    else SYNC.err=(e&&e.message)||"Sync failed.";
+    scSave();
+  }).then(function(){
+    SYNC.busy=false;
+    var h=location.hash.replace(/^#\/?/,"");
+    if(h==="shared")renderShared();
+    else if(CHG&&!typing())keepScroll();
+    CHG=false;
+  });
+}
+
+/* --- notes, indexed by record key. Pending notes (still in the outbox) are
+   folded in so an officer sees their own note the moment they save it, and a
+   done-tick is applied optimistically over the server's copy. */
+function nIndex(){
+  if(NIDX)return NIDX;
+  var idx={}, over={}, me=(AU&&AU.name)||"";
+  OB.forEach(function(op){if(op.type==="done")over[op.noteId]=op;});
+  Object.keys(SC.notes).forEach(function(id){
+    var n=SC.notes[id], v={id:id,body:n.body,action:!!n.action_needed,by:n.author_name,
+      t:tsParse(n.written_at),done:n.done_at?tsParse(n.done_at):0,doneBy:n.done_by||""};
+    var o=over[id];
+    if(o){v.done=o.done?o.at:0; v.doneBy=o.done?me:"";}
+    (idx[n.rec_key]=idx[n.rec_key]||[]).push(v);
+  });
+  OB.forEach(function(op){
+    if(op.type!=="note")return;
+    var r=op.row;
+    (idx[r.rec_key]=idx[r.rec_key]||[]).push({id:r.id,body:r.body,action:!!r.action_needed,by:me,
+      t:tsParse(r.written_at),done:0,doneBy:"",pending:true,failed:op.failed||""});
+  });
+  Object.keys(idx).forEach(function(k){idx[k].sort(function(a,b){return b.t-a.t;});});
+  NIDX=idx; return idx;
+}
+function ntStat(key){
+  var l=nIndex()[key]||[], open=0;
+  l.forEach(function(n){if(n.action&&!n.done)open++;});
+  return {n:l.length,open:open};
+}
+function ntChip(key){
+  if(!shOn())return "";
+  var s=ntStat(key);
+  if(!s.n)return "";
+  return s.open?'<span class="chip ntact">ACTION NEEDED</span>':'<span class="chip nt">NOTES '+s.n+'</span>';
+}
+function vehLabel(v){return ((v["Make Model"]||"Vehicle")+" "+(v["Plate No"]||v["Licence No"]||"")).trim();}
+function recInfo(t,i){
+  if(t==="v"){var v=V[i]; return v&&{key:clKeyV(v),type:"vehicle",label:vehLabel(v)};}
+  if(t==="o"){var o=O[i]; return o&&{key:clKey(o),type:"operator",label:(opName(o)+" "+(o["Licence Number"]||"")).trim()};}
+  var w=W[i]; return w&&{key:nkW(w),type:"owner",label:ownerName(w)};
+}
+function ntAdd(t,i){
+  if(!shSigned())return;
+  var ta=document.getElementById("ntbody"), body=((ta&&ta.value)||"").trim();
+  if(!body){if(ta)ta.focus(); return;}
+  var r=recInfo(t,i); if(!r)return;
+  OB.push({type:"note",row:{id:uid(),rec_key:r.key,rec_type:r.type,rec_label:r.label.slice(0,200),
+    body:body.slice(0,2000),action_needed:!!document.getElementById("ntact").checked,
+    written_at:new Date().toISOString()}});
+  obSave(); ta.value="";
+  keepScroll(); shSync(true);
+}
+function ntDone(id,flag){
+  if(!shSigned())return;
+  OB.push({type:"done",noteId:id,done:!!flag,at:Math.floor(Date.now()/1000)});
+  obSave(); keepScroll(); shSync(true);
+}
+function ntJump(){
+  var e=document.getElementById("ntsec"); if(!e)return;
+  e.scrollIntoView({behavior:"smooth",block:"start"});
+  var ta=document.getElementById("ntbody");
+  if(ta&&e.getAttribute("data-n")==="0")setTimeout(function(){ta.focus();},350);
+}
+function ntWhen(t){
+  var d=new Date(t*1000), o={month:"short",day:"numeric",hour:"numeric",minute:"2-digit"};
+  if(d.getFullYear()!==new Date().getFullYear())o.year="numeric";
+  try{return d.toLocaleString("en-CA",o);}catch(e){return d.toLocaleString();}
+}
+/* The strip under a record's header. Always rendered when sharing is on, for
+   the same reason the check panel is: "no notes" is itself an answer, and a
+   strip that comes and goes is one you have to hunt for. Turns amber with
+   notes and red when one still needs action, so it reads at a glance. */
+function ntBar(key){
+  if(!shOn())return "";
+  var s=ntStat(key), cls="ntbar"+(s.open?" ntbar-act":(s.n?" ntbar-has":""));
+  var line=s.n?('<b>'+s.n+' note'+(s.n===1?'':'s')+'</b>'+
+      (s.open?' · <b class="ntopen">'+s.open+' need'+(s.open===1?'s':'')+' action</b>':'')):'No notes yet';
+  return '<div class="'+cls+'"><span class="cllabel">Notes</span><span class="clline">'+line+'</span>'+
+    '<button class="clbtn" onclick="ntJump()">'+(s.n?'Read':'Add note')+'</button></div>';
+}
+function ntItem(n){
+  var st=n.failed?'<span class="badge b-bad">NOT SENT</span>':(n.pending?'<span class="chip clseen">waiting to send</span>':'');
+  var act=n.action?(n.done?'<span class="chip ntdone">DONE'+(n.doneBy?' · '+esc(n.doneBy):'')+'</span>'
+    :'<span class="chip ntact">ACTION NEEDED</span>'):'';
+  var btn=(n.action&&!n.pending)?'<button class="clbtn" onclick="ntDone(\''+n.id+'\','+(n.done?'false':'true')+')">'+
+    (n.done?'Reopen':'Mark done')+'</button>':'';
+  return '<div class="ntitem'+((n.action&&!n.done)?' ntitem-act':'')+'">'+
+    '<div class="nthead"><b>'+esc(n.by||"")+'</b><span>'+esc(ntWhen(n.t))+'</span></div>'+
+    '<div class="ntbody">'+esc(n.body)+'</div>'+
+    ((act||st||btn||n.failed)?'<div class="ntfoot">'+act+st+(n.failed?'<span class="faintx">'+esc(n.failed)+'</span>':'')+btn+'</div>':'')+
+    '</div>';
+}
+function ntSection(t,i,key){
+  if(!shOn())return "";
+  var l=nIndex()[key]||[];
+  var h='<div class="seclabel" id="ntsec" data-n="'+l.length+'">Notes · shared with other officers ('+l.length+')</div>';
+  if(shSigned()){
+    h+=(AU.dead?'<div class="ntwarn">Signed out — what you write is kept and will send once you '+
+        '<span class="link" onclick="go(\'shared\')">sign in again</span>.</div>':'')+
+      '<div class="ntform"><textarea id="ntbody" class="ntext" rows="3" maxlength="2000" '+
+        'placeholder="Add a note to this record… what happened, what needs doing"></textarea>'+
+      '<label class="ntchk"><input type="checkbox" id="ntact"> Action needed</label>'+
+      '<button class="copybtn" onclick="ntAdd(\''+t+'\','+i+')">Save note</button></div>';
+  }else{
+    h+='<div class="notes">Sign in to read and add shared notes. '+
+      '<span class="link" onclick="go(\'shared\')">Sign in…</span></div>';
+  }
+  return h+(l.length?l.map(ntItem).join(""):'<div class="empty">No notes on this record yet.</div>');
+}
+
+/* --- records that still have an action open, for the home screen. */
+function actionRecs(){
+  var idx=nIndex(), keys=Object.keys(idx).filter(function(k){
+    return idx[k].some(function(n){return n.action&&!n.done;});});
+  if(!keys.length)return [];
+  var by={};
+  W.forEach(function(w,ix){by[nkW(w)]={t:"w",i:ix};});
+  V.forEach(function(v,ix){by[clKeyV(v)]={t:"v",i:ix};});
+  O.forEach(function(o,ix){by[clKey(o)]={t:"o",i:ix};});
+  return keys.map(function(k){return by[k];}).filter(Boolean);
+}
+function actionCard(){
+  if(!shOn())return "";
+  var n=actionRecs().length;
+  if(!n)return "";
+  return '<div class="card" onclick="go(\'actions\')"><div class="opdot" style="color:var(--bad);border-color:var(--bad)">!</div>'+
+    '<div class="cmain"><div class="cname">'+n+' record'+(n===1?'':'s')+' with open actions</div>'+
+    '<div class="csub">Notes marked "action needed" that nobody has marked done</div></div>'+
+    '<div class="chev">&#8250;</div></div>';
+}
+function renderActions(){
+  var r=actionRecs();
+  main.innerHTML='<div class="seclabel">Open actions ('+r.length+')</div>'+
+    (r.length?r.map(function(e){return e.t==="o"?opCard(O[e.i]):(e.t==="v"?vehCard(V[e.i]):ownerCard(W[e.i]));}).join(""):
+      '<div class="empty">Nothing is waiting on an action.</div>');
+}
+
+/* --- sign-in and status page. */
+function agoShort(ts){
+  var s=Math.floor(Date.now()/1000-ts);
+  if(s<60)return "just now";
+  if(s<3600)return Math.floor(s/60)+" min ago";
+  return clAgo(ts);
+}
+function shStatus(){
+  var p=[];
+  if(SYNC.busy)p.push("Syncing…");
+  else if(SYNC.err)p.push(esc(SYNC.err));
+  else if(SC.at)p.push("Synced "+esc(agoShort(SC.at)));
+  else p.push("Not synced yet");
+  if(OB.length)p.push(OB.length+" waiting to send");
+  return p.join(" · ");
+}
+function shLine(){
+  if(!shOn())return "";
+  var t=!shSigned()?'Shared notes: <span class="link" onclick="go(\'shared\')">sign in…</span>':
+    (AU.dead?'Shared notes: <span class="link" onclick="go(\'shared\')">sign in again</span>'+(OB.length?' · '+OB.length+' waiting to send':''):
+      'Shared notes · '+esc(AU.name)+(OB.length?' · '+OB.length+' waiting to send':'')+
+      ' · <span class="link" onclick="go(\'shared\')">details</span>');
+  return '<div class="hint" style="padding:10px 20px 0">'+t+'</div>';
+}
+function renderShared(){
+  var h='<div class="seclabel">Shared notes and checks</div>';
+  if(!shOn()){
+    main.innerHTML=h+'<div class="notes">This data file has no shared-notes connection, so notes and shared checks are off. '+
+      'The administrator turns them on in the build settings.</div>';
+    return;
+  }
+  if(shSigned()&&!AU.dead){
+    var failed=OB.filter(function(o){return o.failed;}).length;
+    main.innerHTML=h+'<div class="srccard">Signed in as <b>'+esc(AU.name)+'</b><br>'+esc(AU.email||"")+'</div>'+
+      '<div class="stamp">'+shStatus()+'</div>'+
+      '<button class="copybtn" onclick="shNow()">Sync now</button>'+
+      (failed?'<button class="copybtn" style="color:var(--bad)" onclick="shDiscard()">Discard '+failed+
+        ' item'+(failed===1?'':'s')+' the server refused</button>':'')+
+      '<button class="copybtn" style="color:var(--bad)" onclick="shOut()">Sign out of this device</button>';
+    return;
+  }
+  main.innerHTML=h+(AU&&AU.dead
+    ?'<div class="ntwarn">The saved sign-in no longer works. Sign in again'+(OB.length?' — the '+OB.length+
+      ' item'+(OB.length===1?'':'s')+' waiting to send will go out afterwards':'')+'.</div>'
+    :'<div class="notes">Sign in with the account the administrator set up for you. Notes and "Checked" marks are then '+
+      'shared with the other officers. Signing in needs a signal once; after that the app works offline and sends '+
+      'anything pending when it reconnects.</div>')+
+    '<input id="shem" class="dsinput" type="email" inputmode="email" autocomplete="username" spellcheck="false" '+
+      'placeholder="Email" value="'+esc((AU&&AU.email)||"")+'">'+
+    '<input id="shpw" class="dsinput" type="password" autocomplete="current-password" placeholder="Password">'+
+    '<button class="copybtn" id="shgo">Sign in</button><div class="stamp" id="shmsg"></div>';
+  var msg=document.getElementById("shmsg"), pw=document.getElementById("shpw");
+  function go2(){
+    var em=document.getElementById("shem").value.trim();
+    if(!em||!pw.value){msg.textContent="Enter your email and password."; return;}
+    msg.textContent="Signing in…";
+    shSignIn(em,pw.value).then(function(a){
+      if(AU&&AU.uid&&AU.uid!==a.uid){OB=[]; obSave(); SC=emptySC(); scSave();}
+      AU=a; auSave(); NIDX=null; pw.value="";
+      shSync(true); renderShared();
+    }).catch(function(e){
+      msg.textContent=(e&&e.net)?"No connection. Signing in needs a signal.":((e&&e.message)||"Could not sign in.");
+    });
+  }
+  document.getElementById("shgo").addEventListener("click",go2);
+  pw.addEventListener("keydown",function(ev){if(ev.key==="Enter")go2();});
+}
+function shNow(){shSync(true).then(function(){if(location.hash.replace(/^#\/?/,"")==="shared")renderShared();}); renderShared();}
+function shOut(){
+  var n=OB.length;
+  if(!confirm(n?(n+" item"+(n===1?"":"s")+" not yet sent will be lost. Sign out anyway?"):
+      "Sign out of shared notes on this device? The shared notes kept here are removed."))return;
+  AU=null; OB=[]; SC=emptySC(); NIDX=null;
+  try{localStorage.removeItem(AU_KEY); localStorage.removeItem(OB_KEY); localStorage.removeItem(SC_KEY);}catch(e){}
+  renderShared();
+}
+function shDiscard(){
+  OB=OB.filter(function(o){return !o.failed;}); obSave(); renderShared();
+}
+/* One set of listeners for the life of the page, however many times boot()
+   runs, always pointing at the latest closure. */
+window.__shTick=function(){shSync(false);};
+window.__shForce=function(){shSync(true);};
+if(!window.__shWired){
+  window.__shWired=true;
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState==="visible"&&window.__shTick)window.__shTick();});
+  /* A regained signal always syncs: the throttle exists to stop chatter, and
+     a failed attempt seconds ago is exactly when this event matters. */
+  window.addEventListener("online",function(){if(window.__shForce)window.__shForce();});
+  setInterval(function(){if(document.visibilityState==="visible"&&window.__shTick)window.__shTick();},180000);
+}
+setTimeout(function(){shSync(true);},400);
 /* One panel, one position, every record type. Always rendered -- "not checked"
    is itself the answer to the question the officer is asking, and a panel that
    comes and goes is one you have to hunt for. */
@@ -1525,8 +2058,8 @@ function pairNote(arrow,where){
 }
 function clPanel(s,handler){
   var line=s.checked
-    ?'<b>Checked '+esc(clAgo(s.checked))+'</b>'+(s.seen?' \u00B7 seen '+esc(clAgo(s.seen)):'')
-    :(s.seen?'Not checked \u00B7 seen '+esc(clAgo(s.seen)):'Not checked on this device');
+    ?'<b>Checked '+esc(clAgo(s.checked))+(s.by?' by '+esc(s.by):'')+'</b>'+(s.seen?' \u00B7 you saw '+esc(clAgo(s.seen)):'')
+    :(s.seen?'Not checked \u00B7 you saw '+esc(clAgo(s.seen)):(shOn()?'Not checked':'Not checked on this device'));
   return '<div class="clpanel'+((s.checked&&clDays(s.checked)<14)?' clrecent':'')+'">'+
     '<span class="cllabel">Check history</span>'+
     '<span class="clline">'+line+'</span>'+
@@ -1561,9 +2094,11 @@ function checkedCards(){
   /* Owners last: an owner-operator shares the driver's key, and the operator
      record is the more useful of the two to land on. */
   W.forEach(function(w,ix){var k=clKeyW(w); if(byKey[k]==null)byKey[k]={t:"w",i:ix};});
-  var ks=Object.keys(m).filter(function(k){return m[k][1]&&byKey[k];});
+  var seenK={}, ks=Object.keys(m).concat(Object.keys(SC.checks)).filter(function(k){
+    if(seenK[k]||!byKey[k]||!clGetK(k).checked)return false;
+    seenK[k]=1; return true;});
   if(!ks.length)return "";
-  ks.sort(function(a,b){return m[b][1]-m[a][1];});
+  ks.sort(function(a,b){return clGetK(b).checked-clGetK(a).checked;});
   /* RECENT already lists whatever was opened this session, directly above.
      Skip those so a record looked at a minute ago is not printed twice. */
   var rows=ks.map(function(k){
@@ -1584,7 +2119,7 @@ function opCard(o,extra){
     '<div class="opdot">'+esc(init)+'</div>'+
     '<div class="cmain"><div class="cname">'+esc(opName(o))+'</div>'+
     '<div class="csub">'+dash(o["Business Name"])+'</div>'+
-    '<div class="crow2"><span class="chip t-'+esc(o["Operator Type"])+'">'+esc(o["Operator Type"])+' operator</span>'+
+    '<div class="crow2">'+ntChip(clKey(o))+'<span class="chip t-'+esc(o["Operator Type"])+'">'+esc(o["Operator Type"])+' operator</span>'+
     (o["Licence Number"]?'<span class="plate">'+esc(o["Licence Number"])+'</span>':'')+
     (ownop?'<span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
     (flag?'<span class="badge b-bad">INACTIVE/CANCELLED</span>':'')+
@@ -1599,7 +2134,7 @@ function ownerCard(w,extra){
     '<div class="opdot">'+esc(init)+'</div>'+
     '<div class="cmain"><div class="cname">'+esc(ownerName(w))+'</div>'+
     '<div class="csub">'+dash(w["Business Name"])+'</div>'+
-    '<div class="crow2"><span class="chip" style="background:var(--panel2);color:var(--dim)">OWNER</span>'+
+    '<div class="crow2">'+ntChip(nkW(w))+'<span class="chip" style="background:var(--panel2);color:var(--dim)">OWNER</span>'+
     '<span class="chip" style="background:var(--panel2);color:var(--dim)">'+n+' vehicle'+(n===1?"":"s")+'</span>'+
     (ownop?'<span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
     clChipsW(w)+
@@ -1781,6 +2316,7 @@ function renderHome(q){
     const shortcut=(k,label)=>cnt[k]?'<div class="fchip" onclick="go(\'flags/'+k+'\')">'+label+' \u00B7 '+cnt[k]+'</div>':'';
     main.innerHTML='<div class="hint">Search by deck light number, plate, owner or operator name, business or licence number.</div>'+
       '<div class="browsebar">'+selectEl("fType",TYPE_OPTS,HFILTER.type)+selectEl("fStat",STAT_OPTS,HFILTER.stat)+'</div>'+
+      actionCard()+
       (n?'<div class="card" onclick="go(\'flags\')">'+
         '<div class="opdot" style="color:var(--bad);border-color:var(--bad)">&#9888;</div>'+
         '<div class="cmain"><div class="cname">'+n+' flagged records</div>'+
@@ -1792,7 +2328,7 @@ function renderHome(q){
       checkedCards()+
       '<div class="counts">'+DB.counts.vehicles+' active vehicles \u00B7 '+DB.counts.operators+' active operators \u00B7 '+(DB.counts.owners||0)+' owners</div>'+
       '<div class="stamp">Built '+esc(DB.built)+' from '+esc(DB.sources.vehicles)+' + '+esc(DB.sources.operators)+
-        '<br>App version '+APP_VERSION+'</div>'+
+        '<br>App version '+APP_VERSION+'</div>'+shLine()+
       (window.__SHELL__?'<div class="hint">'+(window.__syncLine?window.__syncLine():'')+
         '<span class="link" onclick="window.__checkNow()">Check for new data</span> \u00B7 '+
         '<span class="link" onclick="window.__datasrc()">Data source\u2026</span> \u00B7 '+
@@ -1897,6 +2433,7 @@ function renderVehicle(i){
     status("MVI due",addYear(v["First MVIDate"]))+
     '</div></div>';
   h+=clPanel(priorV,"markCheckedV("+i+")");
+  h+=ntBar(clKeyV(v));
   h+='<button class="copybtn" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
@@ -1914,7 +2451,8 @@ function renderVehicle(i){
     row("MVI due (MVI + 1 yr)",dash(addYear(v["First MVIDate"])))+
     row("Vehicle ID",dash(v["Vehicle ID"]))+
     '</div>';
-  if(v["Notes"]) h+='<div class="seclabel">Notes</div><div class="notes">'+esc(v["Notes"])+'</div>';
+  h+=ntSection("v",i,clKeyV(v));
+  if(v["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(v["Notes"])+'</div>';
   if(others.length){
     h+='<div class="seclabel">Other vehicles, same owner ('+others.length+')</div>'+others.map(vehCard).join("");
   }
@@ -1948,6 +2486,7 @@ function renderOperator(i){
   const addr=[o["Address1"],o["Address2"],[o["City"],o["Province"],o["Postal Code"]].filter(Boolean).join(", ")]
     .filter(Boolean).map(esc).join("<br>");
   h+=clPanel(prior,"markChecked("+i+")");
+  h+=ntBar(clKey(o));
   h+='<button class="copybtn" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Address",addr||"\u2014")+
@@ -1959,7 +2498,8 @@ function renderOperator(i){
     row("Approved",dash(o["Approval Date"]))+
     row("District",dash(o["District"]))+
     '</div>';
-  if(o["Notes"]) h+='<div class="seclabel">Notes</div><div class="notes">'+esc(o["Notes"])+'</div>';
+  h+=ntSection("o",i,clKey(o));
+  if(o["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(o["Notes"])+'</div>';
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Vehicles in this name ('+veh.length+')</div>';
   const sn=(o._vsn||[]).map(ix=>V[ix]).filter(Boolean);
@@ -1986,6 +2526,7 @@ function renderOwner(i){
     (op?' <span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
     '</div></div></div></div>';
   h+=clPanel(priorW,"markCheckedW("+i+")");
+  h+=ntBar(nkW(w));
   h+='<button class="copybtn" onclick="copyRec(\'w\','+i+',this)">Copy record summary</button>';
   h+='<div class="grid">'+
     row("Owner ID",dash(w["Owner ID"]))+
@@ -1994,6 +2535,7 @@ function renderOwner(i){
        (w._opc||[]).length?row("Operator link",opcNote(w._opc)):
        row("Operator link",'<span class="empty">Not separately licensed as an operator</span>'))+
     '</div>';
+  h+=ntSection("w",i,nkW(w));
   const veh=(w._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Vehicles ('+veh.length+')</div>';
   h+=veh.length?veh.map(v=>vehCard(v)).join(""):'<div class="empty">No active vehicles on file for this owner.</div>';
@@ -2007,9 +2549,12 @@ function route(){
   const h=location.hash.replace(/^#\/?/,"");
   const m=/^(v|o|w)\/(\d+)$/.exec(h);
   const fm=/^flags(?:\/([a-z]+))?(\/soon)?$/.exec(h);
+  const sp=(h==="shared"||h==="actions");
   window.scrollTo(0,0);
-  document.getElementById("back").style.display=(m||fm)?"flex":"none";
-  if(m){ if(m[1]==="v") renderVehicle(+m[2]); else if(m[1]==="o") renderOperator(+m[2]); else renderOwner(+m[2]); }
+  document.getElementById("back").style.display=(m||fm||sp)?"flex":"none";
+  if(h==="shared"){ renderShared(); }
+  else if(h==="actions"){ renderActions(); }
+  else if(m){ if(m[1]==="v") renderVehicle(+m[2]); else if(m[1]==="o") renderOperator(+m[2]); else renderOwner(+m[2]); }
   else if(fm){ renderFlags(fm[1],!!fm[2]); }
   else { renderHome(q.value); }
 }
@@ -2027,6 +2572,8 @@ clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
 window.markChecked=markChecked;window.markCheckedV=markCheckedV;
 window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
+window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
+window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
 window.__route=route;
 window.addEventListener("hashchange",route);
 route();
