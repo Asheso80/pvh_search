@@ -124,6 +124,10 @@ main{flex:1;padding:10px 12px 40px}
 .ntbar-has{border-color:rgba(247,190,74,.75);background:rgba(247,190,74,.13)}
 .ntbar-act{border-color:var(--bad);background:rgba(255,99,99,.13)}
 .ntopen{color:var(--bad)}
+.chlist{flex:0 0 100%;border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
+.chrow{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:13px;color:var(--dim)}
+.chrow b{color:var(--text)}
+.chlink{white-space:nowrap;font-weight:600}
 .ntform{margin-bottom:12px}
 .ntext{display:block;width:100%;min-height:86px;resize:vertical;border:1px solid var(--line);
   border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-size:16px;
@@ -277,7 +281,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v12 · 2026-10-02";
+var APP_VERSION="v13 · 2026-10-02";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -453,7 +457,7 @@ function clGetK(k){
   var lc=(e&&e[1])||0, st=(sh&&sh.t)||0, by="";
   if(st&&st>=lc)by=sh.by||"";
   else if(lc)by=(AU&&AU.name)||"";
-  return {seen:(e&&e[0])||0, checked:Math.max(lc,st), by:by};
+  return {k:k, seen:(e&&e[0])||0, checked:Math.max(lc,st), by:by};
 }
 function clMarkK(k,deliberate,label){
   var m=clLoad(), e=m[k]||[0,0];
@@ -542,9 +546,12 @@ var SH=(DB.shared&&DB.shared.url&&DB.shared.key)?DB.shared:null;
 var SC_KEY="pvh_shared_cache", OB_KEY="pvh_outbox", AU_KEY="pvh_auth";
 function jget(k,d){try{var r=localStorage.getItem(k);return r?JSON.parse(r):d;}catch(e){return d;}}
 function jset(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
-function emptySC(){return {notes:{},checks:{},nSince:"",cSince:"",at:0};}
+function emptySC(){return {notes:{},checks:{},hist:{},nSince:"",cSince:"",at:0};}
 var SC=jget(SC_KEY,null);
 if(!SC||typeof SC!=="object"||!SC.notes||!SC.checks)SC=emptySC();
+/* A cache written before the check list existed has only each record's latest
+   check. Start its check pull from scratch so the list backfills. */
+if(!SC.hist){SC.hist={}; SC.cSince="";}
 var OB=jget(OB_KEY,[]); if(!Array.isArray(OB))OB=[];
 var AU=jget(AU_KEY,null);
 var SYNC={busy:false,err:"",lastTry:0};
@@ -554,6 +561,10 @@ function shSigned(){return !!(AU&&AU.refresh);}
 function scSave(){
   var cut=Date.now()/1000-CLOG_DAYS*86400;
   Object.keys(SC.checks).forEach(function(k){if((SC.checks[k].t||0)<cut)delete SC.checks[k];});
+  Object.keys(SC.hist).forEach(function(k){
+    SC.hist[k]=SC.hist[k].filter(function(x){return x.t>=cut;});
+    if(!SC.hist[k].length)delete SC.hist[k];
+  });
   NIDX=null; jset(SC_KEY,SC);
 }
 function obSave(){
@@ -664,7 +675,7 @@ function shFlush(){
 /* --- pull. Incremental by a server timestamp, a page at a time. The boundary
    row is fetched again each round (gte), which is harmless because rows are
    merged by id / record key. */
-var CHG=false;
+var CHG=false, CH_KEEP=50, CH_SHOW=5;
 function pullPages(table,col,since,take){
   function page(s){
     return shApi("GET","/rest/v1/"+table+"?select=*&order="+col+".asc&limit=1000&"+col+"=gte."+encodeURIComponent(s))
@@ -696,6 +707,13 @@ function pullChecks(){
     rows.forEach(function(c){
       var t=tsParse(c.written_at), cur=SC.checks[c.rec_key];
       if(!cur||t>cur.t){SC.checks[c.rec_key]={t:t,by:c.author_name||""}; CHG=true;}
+      var h=SC.hist[c.rec_key]||(SC.hist[c.rec_key]=[]);
+      if(!h.some(function(x){return x.i===c.id;})){
+        h.push({i:c.id,t:t,by:c.author_name||""});
+        h.sort(function(a,b){return b.t-a.t;});
+        if(h.length>CH_KEEP)h.length=CH_KEEP;
+        CHG=true;
+      }
     });
   }).then(function(s){SC.cSince=s;});
 }
@@ -965,14 +983,53 @@ setTimeout(function(){shSync(true);},400);
 function pairNote(arrow,where){
   return '<div class="pairnote"><b>'+arrow+'</b> Same person \u00B7 see '+where+'</div>';
 }
+/* Every shared check on a record, newest first, plus this device's own marks
+   that have not been sent yet. Nothing here is drawn until someone taps. */
+var CH_OPEN={}, CH_KEYS=[];
+function chList(k){
+  var out=(SC.hist[k]||[]).map(function(x){return {t:x.t,by:x.by,pending:false};});
+  OB.forEach(function(op){
+    if(op.type==="check"&&op.row.rec_key===k)
+      out.push({t:tsParse(op.row.written_at),by:(AU&&AU.name)||"",pending:true});
+  });
+  out.sort(function(a,b){return b.t-a.t;});
+  return out;
+}
+function chToggle(n){
+  var k=CH_KEYS[n]; if(k==null)return;
+  CH_OPEN[k]=CH_OPEN[k]?0:CH_SHOW;
+  keepScroll();
+}
+function chMore(n){
+  var k=CH_KEYS[n]; if(k==null)return;
+  CH_OPEN[k]=CH_KEEP;
+  keepScroll();
+}
+function chBlock(s,n,l){
+  var lim=CH_OPEN[s.k]; if(!lim)return "";
+  var rows=l.slice(0,lim).map(function(x){
+    return '<div class="chrow"><b>'+esc(x.by||"?")+'</b><span>'+esc(ntWhen(x.t))+
+      (x.pending?' \u00B7 waiting to send':'')+'</span></div>';}).join("");
+  return '<div class="chlist">'+rows+(l.length>lim?
+    '<div class="chrow"><span class="link" onclick="chMore('+n+')">Show all ('+l.length+')</span></div>':'')+'</div>';
+}
 function clPanel(s,handler){
   var line=s.checked
     ?'<b>Checked '+esc(clAgo(s.checked))+(s.by?' by '+esc(s.by):'')+'</b>'+(s.seen?' \u00B7 you saw '+esc(clAgo(s.seen)):'')
     :(s.seen?'Not checked \u00B7 you saw '+esc(clAgo(s.seen)):(shOn()?'Not checked':'Not checked on this device'));
+  /* The list only exists with sharing on, and only earns a link once there is
+     more than the one check the line already states. */
+  var l=shOn()?chList(s.k):[], n=-1, link="", blk="";
+  if(l.length>1){
+    n=CH_KEYS.indexOf(s.k); if(n<0){CH_KEYS.push(s.k); n=CH_KEYS.length-1;}
+    link=' <span class="link chlink" onclick="chToggle('+n+')">'+(CH_OPEN[s.k]?'Hide':'History ('+l.length+')')+'</span>';
+    blk=chBlock(s,n,l);
+  }
   return '<div class="clpanel'+((s.checked&&clDays(s.checked)<14)?' clrecent':'')+'">'+
     '<span class="cllabel">Check history</span>'+
-    '<span class="clline">'+line+'</span>'+
+    '<span class="clline">'+line+link+'</span>'+
     '<button class="clbtn" onclick="'+handler+'">'+(s.checked?'Mark again':'Mark as checked')+'</button>'+
+    blk+
     '</div>';
 }
 function markChecked(i){
@@ -1481,7 +1538,7 @@ clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
 window.markChecked=markChecked;window.markCheckedV=markCheckedV;
 window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
-window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
+window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
 window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
 window.__route=route;
 window.addEventListener("hashchange",route);
