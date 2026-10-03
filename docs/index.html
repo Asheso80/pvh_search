@@ -128,6 +128,15 @@ main{flex:1;padding:10px 12px 40px}
 .chrow{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:13px;color:var(--dim)}
 .chrow b{color:var(--text)}
 .chlink{white-space:nowrap;font-weight:600}
+.ntgone{background:var(--panel2);border-style:dashed}
+.ntgone .nthead b{color:var(--dim);font-weight:600}
+.ntorig{margin-top:8px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.nted{margin-top:6px;font-size:12px}
+.nted-btns{display:flex;gap:8px;margin-top:8px}
+.nthist{margin-top:6px;padding:8px 10px;border-left:3px solid var(--line);background:var(--panel2);border-radius:0 8px 8px 0}
+.nthrow{padding:4px 0}
+.nthrow .ntbody{font-size:14px;color:var(--dim)}
+.ntmine{display:flex;gap:16px;margin-top:9px;font-size:13px;font-weight:600}
 .ntform{margin-bottom:12px}
 .ntext{display:block;width:100%;min-height:86px;resize:vertical;border:1px solid var(--line);
   border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-size:16px;
@@ -281,7 +290,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v14 · 2026-10-02";
+var APP_VERSION="v15 · 2026-10-02";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -546,12 +555,13 @@ var SH=(DB.shared&&DB.shared.url&&DB.shared.key)?DB.shared:null;
 var SC_KEY="pvh_shared_cache", OB_KEY="pvh_outbox", AU_KEY="pvh_auth";
 function jget(k,d){try{var r=localStorage.getItem(k);return r?JSON.parse(r):d;}catch(e){return d;}}
 function jset(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
-function emptySC(){return {notes:{},checks:{},hist:{},nSince:"",cSince:"",at:0};}
+function emptySC(){return {notes:{},checks:{},hist:{},ev:{},nSince:"",cSince:"",at:0};}
 var SC=jget(SC_KEY,null);
 if(!SC||typeof SC!=="object"||!SC.notes||!SC.checks)SC=emptySC();
 /* A cache written before the check list existed has only each record's latest
    check. Start its check pull from scratch so the list backfills. */
 if(!SC.hist){SC.hist={}; SC.cSince="";}
+if(!SC.ev){SC.ev={}; SC.eSince="";}
 var OB=jget(OB_KEY,[]); if(!Array.isArray(OB))OB=[];
 var AU=jget(AU_KEY,null);
 var SYNC={busy:false,err:"",lastTry:0};
@@ -659,6 +669,10 @@ function shFlush(){
     var op=OB[i], req;
     if(op.type==="note")req=shApi("POST","/rest/v1/notes",op.row,"return=minimal");
     else if(op.type==="check")req=shApi("POST","/rest/v1/checks",op.row,"return=minimal");
+    else if(op.type==="edit")req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
+      {body:op.body},"return=minimal");
+    else if(op.type==="remove")req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
+      {removed_at:new Date(op.at*1000).toISOString()},"return=minimal");
     else req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
       {done_at:op.done?new Date(op.at*1000).toISOString():null},"return=minimal");
     return req.then(function(r){
@@ -666,7 +680,7 @@ function shFlush(){
       if(r.status===401||r.status===403)throw {auth:true,refused:true};
       if(r.status>=500||r.status===408||r.status===429)throw {net:true};
       op.failed=(r.json&&(r.json.message||r.json.hint))||("HTTP "+r.status);
-      obSave(); i++; return next();
+      obSave(); CHG=true; i++; return next();
     });
   }
   return next();
@@ -717,9 +731,24 @@ function pullChecks(){
     });
   }).then(function(s){SC.cSince=s;});
 }
+/* Earlier text of edited notes. Never allowed to fail a sync: until the
+   database has been upgraded there is no such table, and notes still work. */
+function pullEvents(){
+  return pullPages("note_events","created_at",SC.eSince||"1970-01-01T00:00:00Z",function(rows){
+    rows.forEach(function(e){
+      if(e.kind!=="edit")return;
+      var l=SC.ev[e.note_id]||(SC.ev[e.note_id]=[]);
+      if(l.some(function(x){return x.i===e.id;}))return;
+      l.push({i:e.id,t:tsParse(e.created_at),by:e.by_name||"",o:e.old_body||""});
+      l.sort(function(a,b){return a.t-b.t;});
+      CHG=true;
+    });
+  }).then(function(s){SC.eSince=s;},function(e){if(e&&(e.net||e.auth))throw e;});
+}
 function typing(){
   var a=document.activeElement, id=a&&a.id;
-  if(id==="ntbody"||id==="shem"||id==="shpw")return true;
+  if(id==="ntbody"||id==="nteditbody"||id==="shem"||id==="shpw")return true;
+  if(document.getElementById("nteditbody"))return true;
   var t=document.getElementById("ntbody");
   return !!(t&&t.value);
 }
@@ -728,7 +757,7 @@ function shSync(force){
   if(!shOn()||!shSigned()||SYNC.busy)return Promise.resolve();
   if(!force&&Date.now()-SYNC.lastTry<20000)return Promise.resolve();
   SYNC.busy=true; SYNC.lastTry=Date.now(); CHG=false;
-  return shFlush().then(pullNotes).then(pullChecks).then(function(){
+  return shFlush().then(pullNotes).then(pullChecks).then(pullEvents).then(function(){
     SYNC.err=""; SC.at=Math.floor(Date.now()/1000); scSave();
   }).catch(function(e){
     if(e&&e.auth)SYNC.err=(AU&&AU.dead)?"Signed out — sign in again to send and receive.":
@@ -750,28 +779,44 @@ function shSync(force){
    done-tick is applied optimistically over the server's copy. */
 function nIndex(){
   if(NIDX)return NIDX;
-  var idx={}, over={}, me=(AU&&AU.name)||"";
-  OB.forEach(function(op){if(op.type==="done")over[op.noteId]=op;});
+  var idx={}, over={}, me=(AU&&AU.name)||"", myId=(AU&&AU.uid)||"";
+  OB.forEach(function(op){
+    if(op.type==="done"||op.type==="edit"||op.type==="remove")(over[op.noteId]=over[op.noteId]||[]).push(op);
+  });
   Object.keys(SC.notes).forEach(function(id){
     var n=SC.notes[id], v={id:id,body:n.body,action:!!n.action_needed,by:n.author_name,
-      t:tsParse(n.written_at),done:n.done_at?tsParse(n.done_at):0,doneBy:n.done_by||""};
-    var o=over[id];
-    if(o){v.done=o.done?o.at:0; v.doneBy=o.done?me:"";}
+      mine:!!myId&&n.author_id===myId,t:tsParse(n.written_at),
+      done:n.done_at?tsParse(n.done_at):0,doneBy:n.done_by||"",
+      edited:n.edited_at?tsParse(n.edited_at):0,editedBy:n.edited_by||"",
+      removed:n.removed_at?tsParse(n.removed_at):0,removedBy:n.removed_by||"",
+      ev:SC.ev[id]||[]};
+    /* This device's unsent changes show straight away; one the server refused
+       is not shown as if it had happened. */
+    (over[id]||[]).forEach(function(o){
+      if(o.failed){v.opFailed=o.failed; return;}
+      if(o.type==="done"){v.done=o.done?o.at:0; v.doneBy=o.done?me:"";}
+      else if(o.type==="edit"&&!v.removed){v.body=o.body; v.edited=o.at; v.editedBy=me; v.sending=true;}
+      else if(o.type==="remove"&&!v.removed){v.removed=o.at; v.removedBy=me; v.sending=true;}
+    });
     (idx[n.rec_key]=idx[n.rec_key]||[]).push(v);
   });
   OB.forEach(function(op){
     if(op.type!=="note")return;
     var r=op.row;
-    (idx[r.rec_key]=idx[r.rec_key]||[]).push({id:r.id,body:r.body,action:!!r.action_needed,by:me,
-      t:tsParse(r.written_at),done:0,doneBy:"",pending:true,failed:op.failed||""});
+    (idx[r.rec_key]=idx[r.rec_key]||[]).push({id:r.id,body:r.body,action:!!r.action_needed,by:me,mine:true,
+      t:tsParse(r.written_at),done:0,doneBy:"",edited:0,removed:0,ev:[],pending:true,failed:op.failed||""});
   });
   Object.keys(idx).forEach(function(k){idx[k].sort(function(a,b){return b.t-a.t;});});
   NIDX=idx; return idx;
 }
 function ntStat(key){
-  var l=nIndex()[key]||[], open=0;
-  l.forEach(function(n){if(n.action&&!n.done)open++;});
-  return {n:l.length,open:open};
+  var l=nIndex()[key]||[], n=0, open=0;
+  l.forEach(function(x){
+    if(x.removed)return;
+    n++;
+    if(x.action&&!x.done)open++;
+  });
+  return {n:n,open:open};
 }
 function ntChip(key){
   if(!shOn())return "";
@@ -827,22 +872,97 @@ function ntBar(key){
     (s.n?'<button class="clbtn" onclick="ntJump(0)">Read</button>':'')+
     '<button class="clbtn" onclick="ntJump(1)">Add note</button></div>';
 }
+var NT_EDIT="", NT_SHOW={}, NT_HIST={};
+function ntFind(id){
+  var idx=nIndex(), ks=Object.keys(idx);
+  for(var i=0;i<ks.length;i++){
+    for(var j=0;j<idx[ks[i]].length;j++)if(idx[ks[i]][j].id===id)return idx[ks[i]][j];
+  }
+  return null;
+}
+/* Earlier wordings of an edited note, newest first. Each is the text as it
+   stood before the named person changed it. */
+function ntHistBlock(n){
+  var ev=(n.ev||[]).slice().reverse();
+  if(!ev.length)return '<div class="nthist"><div class="faintx">The earlier wording is not on this device yet.</div></div>';
+  return '<div class="nthist">'+ev.map(function(e){
+    return '<div class="nthrow"><div class="faintx">Before the edit by '+esc(e.by||"?")+' · '+esc(ntWhen(e.t))+
+      '</div><div class="ntbody">'+esc(e.o)+'</div></div>';}).join("")+'</div>';
+}
+function ntEditedLine(n){
+  if(!n.edited)return "";
+  return '<div class="nted"><span class="link" onclick="ntHist(\''+n.id+'\')">Edited by '+esc(n.editedBy||"?")+
+    ' · '+esc(ntWhen(n.edited))+(n.sending?' · waiting to send':'')+
+    (NT_HIST[n.id]?' · hide':' · see earlier')+'</span></div>'+(NT_HIST[n.id]?ntHistBlock(n):'');
+}
 function ntItem(n){
+  if(n.removed){
+    var open=NT_SHOW[n.id];
+    return '<div class="ntitem ntgone"><div class="nthead"><b>Note removed</b><span>'+esc(n.removedBy||"?")+
+      ' · '+esc(ntWhen(n.removed))+(n.sending?' · waiting to send':'')+'</span></div>'+
+      '<div class="ntfoot"><span class="link" onclick="ntShow(\''+n.id+'\')">'+(open?'Hide original':'Show original')+'</span></div>'+
+      (open?'<div class="ntorig"><div class="nthead"><b>'+esc(n.by||"")+'</b><span>'+esc(ntWhen(n.t))+'</span></div>'+
+        '<div class="ntbody">'+esc(n.body)+'</div>'+ntEditedLine(n)+'</div>':'')+'</div>';
+  }
   var st=n.failed?'<span class="badge b-bad">NOT SENT</span>':(n.pending?'<span class="chip clseen">waiting to send</span>':'');
   var act=n.action?(n.done?'<span class="chip ntdone">DONE'+(n.doneBy?' · '+esc(n.doneBy):'')+'</span>'
     :'<span class="chip ntact">ACTION NEEDED</span>'):'';
   var btn=(n.action&&!n.pending)?'<button class="clbtn" onclick="ntDone(\''+n.id+'\','+(n.done?'false':'true')+')">'+
     (n.done?'Reopen':'Mark done')+'</button>':'';
+  var body=(NT_EDIT===n.id)
+    ?'<textarea id="nteditbody" class="ntext" rows="4" maxlength="2000">'+esc(n.body)+'</textarea>'+
+      '<div class="nted-btns"><button class="clbtn" onclick="ntEditSave(\''+n.id+'\')">Save change</button>'+
+      '<button class="clbtn" onclick="ntEditCancel()">Cancel</button></div>'
+    :'<div class="ntbody">'+esc(n.body)+'</div>';
+  var mine=(n.mine&&NT_EDIT!==n.id)?'<div class="ntmine"><span class="link" onclick="ntEdit(\''+n.id+'\')">Edit</span>'+
+    '<span class="link" onclick="ntRemove(\''+n.id+'\')">Remove</span></div>':'';
   return '<div class="ntitem'+((n.action&&!n.done)?' ntitem-act':'')+'">'+
     '<div class="nthead"><b>'+esc(n.by||"")+'</b><span>'+esc(ntWhen(n.t))+'</span></div>'+
-    '<div class="ntbody">'+esc(n.body)+'</div>'+
+    body+ntEditedLine(n)+
+    (n.opFailed?'<div class="ntwarn">A change to this note was not accepted: '+esc(n.opFailed)+
+      ' <span class="link" onclick="ntDismiss(\''+n.id+'\')">Dismiss</span></div>':'')+
     ((act||st||btn||n.failed)?'<div class="ntfoot">'+act+st+(n.failed?'<span class="faintx">'+esc(n.failed)+'</span>':'')+btn+'</div>':'')+
-    '</div>';
+    mine+'</div>';
+}
+function ntShow(id){NT_SHOW[id]=!NT_SHOW[id]; keepScroll();}
+/* Clears a refused change from this device so its notice goes away. The note
+   itself is untouched. */
+function ntDismiss(id){
+  OB=OB.filter(function(o){return !(o.failed&&o.noteId===id);});
+  obSave(); keepScroll();
+}
+function ntHist(id){NT_HIST[id]=!NT_HIST[id]; keepScroll();}
+function ntEdit(id){
+  NT_EDIT=id; keepScroll();
+  setTimeout(function(){var t=document.getElementById("nteditbody"); if(t){t.focus(); t.setSelectionRange(t.value.length,t.value.length);}},60);
+}
+function ntEditCancel(){NT_EDIT=""; keepScroll();}
+/* A note still in the outbox has not reached anyone, so editing or removing it
+   just changes what will be sent. Only a note that has been sent leaves a
+   trail -- there is nothing to audit before anyone could have seen it. */
+function ntEditSave(id){
+  var ta=document.getElementById("nteditbody"), body=((ta&&ta.value)||"").trim().slice(0,2000);
+  if(!body){if(ta)ta.focus(); return;}
+  var pend=OB.filter(function(o){return o.type==="note"&&o.row.id===id;})[0];
+  if(pend)pend.row.body=body;
+  else{
+    var cur=ntFind(id);
+    if(cur&&cur.body===body){NT_EDIT=""; keepScroll(); return;}
+    OB.push({type:"edit",noteId:id,body:body,at:Math.floor(Date.now()/1000)});
+  }
+  obSave(); NT_EDIT=""; keepScroll(); shSync(true);
+}
+function ntRemove(id){
+  if(!confirm("Remove this note?\n\nIt stays on file. Everyone can still see that it was removed, by whom and when, and can read the original."))return;
+  var isPending=OB.some(function(o){return o.type==="note"&&o.row.id===id;});
+  if(isPending)OB=OB.filter(function(o){return !(o.type==="note"&&o.row.id===id);});
+  else OB.push({type:"remove",noteId:id,at:Math.floor(Date.now()/1000)});
+  obSave(); keepScroll(); if(!isPending)shSync(true);
 }
 function ntSection(t,i,key){
   if(!shOn())return "";
   var l=nIndex()[key]||[];
-  var h='<div class="seclabel" id="ntsec" data-n="'+l.length+'">Notes · shared with other officers ('+l.length+')</div>';
+  var h='<div class="seclabel" id="ntsec">Notes · shared with other officers ('+ntStat(key).n+')</div>';
   if(shSigned()){
     h+=(AU.dead?'<div class="ntwarn">Signed out — what you write is kept and will send once you '+
         '<span class="link" onclick="go(\'shared\')">sign in again</span>.</div>':'')+
@@ -860,7 +980,7 @@ function ntSection(t,i,key){
 /* --- records that still have an action open, for the home screen. */
 function actionRecs(){
   var idx=nIndex(), keys=Object.keys(idx).filter(function(k){
-    return idx[k].some(function(n){return n.action&&!n.done;});});
+    return idx[k].some(function(n){return n.action&&!n.done&&!n.removed;});});
   if(!keys.length)return [];
   var by={};
   W.forEach(function(w,ix){by[nkW(w)]={t:"w",i:ix};});
@@ -1541,7 +1661,8 @@ clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
 window.markChecked=markChecked;window.markCheckedV=markCheckedV;
 window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
-window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
+window.ntShow=ntShow;window.ntDismiss=ntDismiss;window.ntHist=ntHist;window.ntEdit=ntEdit;window.ntEditCancel=ntEditCancel;
+window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
 window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
 window.__route=route;
 window.addEventListener("hashchange",route);
