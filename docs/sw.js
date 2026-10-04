@@ -1,6 +1,11 @@
-const C="pvh-shell-4723e945";
-self.addEventListener("install",e=>{e.waitUntil(caches.open(C).then(c=>c.addAll(["./","index.html","manifest.webmanifest","icon-192.png","icon-512.png"])).then(()=>self.skipWaiting()))});
-self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
+const C="pvh-shell-9c055f17", G="pvh-geo-d0c16836";
+/* geo.bin is public map data, held in its own cache so a shell update does not
+   re-download it. It is fetched at install so location works offline. */
+self.addEventListener("install",e=>{e.waitUntil(Promise.all([
+  caches.open(C).then(c=>c.addAll(["./","index.html","manifest.webmanifest","icon-192.png","icon-512.png"])),
+  caches.open(G).then(c=>c.match("geo.bin").then(h=>h||c.add(new Request("geo.bin",{cache:"reload"})))).catch(()=>{})
+]).then(()=>self.skipWaiting()))});
+self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C&&x!==G).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
 self.addEventListener("fetch",e=>{
   if(e.request.method!=="GET")return;
   const u=new URL(e.request.url);
@@ -9,6 +14,10 @@ self.addEventListener("fetch",e=>{
      behind in the cache. */
   if(u.origin!==self.location.origin)return;
   if(/\.json(\?|$)/i.test(u.pathname+u.search))return;
+  if(/(^|\/)geo\.bin$/.test(u.pathname)){
+    e.respondWith(caches.open(G).then(c=>c.match(e.request,{ignoreSearch:true}).then(r=>r||fetch(e.request).then(res=>{if(res.ok)c.put(e.request,res.clone());return res;}))));
+    return;
+  }
   /* The page itself is network-first: a redeployed app is picked up on the next
      launch that has a signal, instead of the cached copy being served forever.
      The cache is the fallback, so offline still works, and a 3s cap means a

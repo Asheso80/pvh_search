@@ -289,15 +289,25 @@ a.tel{color:var(--accent);text-decoration:none}
 /* due date sheet: slides over the current page, so the record underneath is kept */
 .sheetbg{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.45);
   display:flex;align-items:flex-end;justify-content:center}
-.sheet{width:100%;max-width:640px;background:var(--bg);border-top:1px solid var(--line);
-  border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
+.sheet{width:100%;max-width:640px;max-height:92vh;overflow-y:auto;background:var(--bg);
+  border-top:1px solid var(--line);border-radius:16px 16px 0 0;
+  padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
 .dueval{font-size:28px;font-weight:700;line-height:1.2;margin:2px 0 4px}
 .duesub{color:var(--dim);font-size:13px;margin-bottom:14px}
 .duelbl{display:block;font-size:12px;font-weight:700;letter-spacing:.06em;
   text-transform:uppercase;color:var(--faint);margin-bottom:14px}
 .duelbl input{display:block;width:100%;height:48px;margin-top:6px;border:1px solid var(--line);
   border-radius:12px;background:var(--panel);color:var(--text);font-size:17px;padding:0 12px}
-.duenote{color:var(--faint);font-size:12px;text-align:center;padding-top:2px}
+.duenote{color:var(--faint);font-size:12px;text-align:center;padding:2px 0 10px}
+.geohead{margin:14px 2px 10px;padding-top:16px;border-top:1px solid var(--line)}
+.geolbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--faint);margin-top:12px}
+.geoval{font-size:20px;font-weight:700;line-height:1.25;white-space:pre-line}
+.geosub{color:var(--dim);font-size:13px}
+.geoacc{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+.geodot{width:10px;height:10px;border-radius:50%;background:var(--faint);flex:0 0 10px}
+.geodot.good{background:var(--ok)}.geodot.fair{background:var(--warn)}.geodot.weak{background:var(--bad)}
+.geostatus{color:var(--dim);font-size:13px;text-align:center;padding:2px 0 10px}
 </style>
 </head>
 <body>
@@ -306,7 +316,7 @@ a.tel{color:var(--accent);text-decoration:none}
     <div class="hrow">
       <button class="navbtn" id="back" onclick="history.back()" style="display:none">&#8592;</button>
       <h1>PVH Field Lookup<small id="stamp"></small></h1>
-      <button class="navbtn" id="duebtn" title="Due date">&#128197;</button>
+      <button class="navbtn" id="duebtn" title="Due date and location">&#128197;</button>
       <button class="navbtn" id="theme" title="Toggle dark mode">&#9789;</button>
     </div>
     <div id="searchwrap">
@@ -317,14 +327,30 @@ a.tel{color:var(--accent);text-decoration:none}
   </header>
   <div id="toast" style="display:none"></div>
   <div class="sheetbg" id="duesheet" style="display:none">
-    <div class="sheet" role="dialog" aria-label="Due date">
+    <div class="sheet" role="dialog" aria-label="Due date and location">
       <div class="seclabel" style="margin-top:0">Due date</div>
       <div class="dueval" id="dueval"></div>
       <div class="duesub" id="duesub"></div>
       <label class="duelbl">Ticket issued<input type="date" id="dueissued"></label>
       <button class="copybtn" id="duecopy">Copy due date</button>
-      <button class="copybtn" id="dueclose" style="color:var(--dim)">Close</button>
       <div class="duenote">Check the courts' closure list if the date is close to a holiday.</div>
+      <div class="seclabel geohead">Location</div>
+      <button class="copybtn" id="geobtn">Find my location</button>
+      <div class="geostatus" id="geostatus"></div>
+      <div id="geobox" style="display:none">
+        <div class="geoacc"><span class="geodot" id="geodot"></span><span id="geoacc"></span></div>
+        <div class="geolbl">Street</div>
+        <div class="geoval" id="geostreet"></div>
+        <div class="geosub" id="geostreetsub"></div>
+        <div class="geolbl">Nearest address</div>
+        <div class="geoval" id="geocivic"></div>
+        <div class="geosub" id="geocivicsub"></div>
+        <div class="geolbl">Cross streets</div>
+        <div class="geoval" id="geocs"></div>
+        <button class="copybtn" id="geocopy" style="margin-top:14px">Copy location</button>
+      </div>
+      <div class="duenote" id="geonote" style="display:none">Contains information licensed under the Open Government Licence &ndash; Nova Scotia. Field aid only, not a legal record.</div>
+      <button class="copybtn" id="dueclose" style="color:var(--dim)">Close</button>
     </div>
   </div>
   <main id="main"></main>
@@ -334,7 +360,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v18 · 2026-10-03";
+var APP_VERSION="v19 · 2026-10-03";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -1722,7 +1748,7 @@ function openDue(){
   showDue();
   document.getElementById("duesheet").style.display="flex";
 }
-function closeDue(){document.getElementById("duesheet").style.display="none";}
+function closeDue(){document.getElementById("duesheet").style.display="none";stopGeo();}
 document.getElementById("duebtn").addEventListener("click",openDue);
 document.getElementById("dueclose").addEventListener("click",closeDue);
 document.getElementById("duesheet").addEventListener("click",e=>{if(e.target.id==="duesheet")closeDue();});
@@ -1731,6 +1757,204 @@ document.getElementById("dueissued").addEventListener("input",showDue);
 document.getElementById("duecopy").addEventListener("click",()=>{
   const t=document.getElementById("dueval").textContent, b=document.getElementById("duecopy");
   const done=()=>{b.textContent="Copied";setTimeout(()=>{b.textContent="Copy due date";},1200);};
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done).catch(done);
+  else done();
+});
+/* ---------- location ---------- */
+/* GPS runs only while the sheet is open, and only after "Find my location" is
+   tapped. Map data is the public NS Civic Address File for CBRM (docs/geo.bin,
+   gzipped JSON), fetched on first use and then held by the service worker. */
+let GEO=null, GCELL=0, geoWatch=null, geoOn=false, geoHeading=null, geoCur=null, geoFilter=null;
+const R_EARTH=6371000, D2R=Math.PI/180;
+function hav(lo1,la1,lo2,la2){
+  const dla=(la2-la1)*D2R, dlo=(lo2-lo1)*D2R;
+  const a=Math.sin(dla/2)**2+Math.cos(la1*D2R)*Math.cos(la2*D2R)*Math.sin(dlo/2)**2;
+  return 2*R_EARTH*Math.asin(Math.sqrt(a));
+}
+function geoCells(lon,lat){
+  const cx=Math.floor(lon/GCELL), cy=Math.floor(lat/GCELL), out=[];
+  for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)out.push((cx+dx)+":"+(cy+dy));
+  return out;
+}
+function ptSeg(plon,plat,alon,alat,blon,blat){
+  const kx=Math.cos(plat*D2R)*111320, ky=111320;
+  const px=plon*kx, py=plat*ky, ax=alon*kx, ay=alat*ky, bx=blon*kx, by=blat*ky;
+  const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy;
+  let t=L2?((px-ax)*dx+(py-ay)*dy)/L2:0;
+  t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*dx),py-(ay+t*dy));
+}
+function nearestCivic(lon,lat){
+  let best=null, bd=Infinity;
+  for(const c of geoCells(lon,lat)){
+    const ids=GEO.pt_grid[c]; if(!ids)continue;
+    for(const i of ids){const p=GEO.points[i], d=hav(lon,lat,p.lon,p.lat); if(d<bd){bd=d;best=p;}}
+  }
+  return best?{p:best,d:bd}:null;
+}
+/* Distance is to the line between road vertices, not to the vertices
+   themselves; vertex distance puts you on the wrong street. */
+function nearestRoad(lon,lat){
+  let best=null, bd=Infinity;
+  const seen=new Set();
+  for(const c of geoCells(lon,lat)){
+    const ids=GEO.rd_grid[c]; if(!ids)continue;
+    for(const i of ids){
+      if(seen.has(i))continue; seen.add(i);
+      const r=GEO.roads[i], g=r.g;
+      for(let k=0;k<g.length-1;k++){
+        const d=ptSeg(lon,lat,g[k][0],g[k][1],g[k+1][0],g[k+1][1]);
+        if(d<bd){bd=d;best=r;}
+      }
+    }
+  }
+  return best?{r:best,d:bd}:null;
+}
+function bearing(la1,lo1,la2,lo2){
+  const y=Math.sin((lo2-lo1)*D2R)*Math.cos(la2*D2R);
+  const x=Math.cos(la1*D2R)*Math.sin(la2*D2R)-Math.sin(la1*D2R)*Math.cos(la2*D2R)*Math.cos((lo2-lo1)*D2R);
+  return (Math.atan2(y,x)/D2R+360)%360;
+}
+/* Intersections on the current street within 800 m. With a travel heading they
+   split into ahead and behind; without one, the two nearest are returned. */
+function crossStreets(lon,lat,street,heading){
+  if(!street)return {ahead:null,behind:null};
+  const cand=[];
+  for(const n of GEO.nodes){
+    if(n.st.indexOf(street)<0)continue;
+    const d=hav(lon,lat,n.lon,n.lat); if(d>800)continue;
+    const others=n.st.filter(x=>x!==street); if(!others.length)continue;
+    cand.push({d:d,br:bearing(lat,lon,n.lat,n.lon),name:others[0]});
+  }
+  if(heading==null){
+    cand.sort((a,b)=>a.d-b.d);
+    return {ahead:cand[0]||null,behind:cand[1]||null};
+  }
+  let ahead=null, behind=null;
+  for(const c of cand){
+    const diff=Math.abs(((c.br-heading+540)%360)-180);
+    if(diff<90){if(!ahead||c.d<ahead.d)ahead=c;}
+    else if(!behind||c.d<behind.d)behind=c;
+  }
+  return {ahead:ahead,behind:behind};
+}
+/* Blends each fix by its reported accuracy against the filter's own confidence,
+   so one noisy reading does not flip the street. Process noise follows GPS
+   speed: quick while driving, smooth while walking or standing. */
+function makeGeoFilter(){
+  let lat=null, lon=null, variance=-1, ts=null;
+  return function(nLat,nLon,nAcc,nTs,speed){
+    if(nAcc==null||isNaN(nAcc))nAcc=50;
+    nAcc=Math.max(1,nAcc);
+    if(variance<0||ts==null||(nTs-ts)>30000){lat=nLat;lon=nLon;variance=nAcc*nAcc;ts=nTs;}
+    else{
+      const q=Math.max(speed||0,1.5), dt=Math.max(0,nTs-ts)/1000;
+      variance+=dt*q*q; ts=nTs;
+      const k=variance/(variance+nAcc*nAcc);
+      lat+=k*(nLat-lat); lon+=k*(nLon-lon); variance=(1-k)*variance;
+    }
+    return {lat:lat,lon:lon,acc:Math.sqrt(variance)};
+  };
+}
+async function loadGeo(){
+  if(GEO)return;
+  const res=await fetch("geo.bin");
+  if(!res.ok)throw new Error("HTTP "+res.status);
+  const text=await new Response(res.body.pipeThrough(new DecompressionStream("gzip"))).text();
+  GEO=JSON.parse(text);
+  GCELL=GEO.meta.grid_cell_deg;
+}
+function geoSay(t){document.getElementById("geostatus").textContent=t||"";}
+function geoReset(){
+  geoCur=null; geoHeading=null; geoFilter=null;
+  document.getElementById("geobox").style.display="none";
+  document.getElementById("geonote").style.display="none";
+  document.getElementById("geobtn").style.display="block";
+  geoSay("");
+}
+function stopGeo(){
+  geoOn=false;
+  if(geoWatch!=null){navigator.geolocation.clearWatch(geoWatch);geoWatch=null;}
+  geoReset();
+}
+function csLine(c,prefix){return (prefix||"")+c.name+" ("+Math.round(c.d)+" m)";}
+function renderGeo(){
+  const g=geoCur, $=id=>document.getElementById(id);
+  $("geobox").style.display="block"; $("geonote").style.display="block"; geoSay("");
+  const a=Math.round(g.acc);
+  $("geodot").className="geodot "+(a<=15?"good":a<=40?"fair":"weak");
+  $("geoacc").textContent="GPS \u00B1"+a+" m \u00B7 "+(a<=15?"Good":a<=40?"Fair":"Weak, move to open sky");
+  if(g.road){
+    $("geostreet").textContent=g.road.r.s||"(unnamed road)";
+    $("geostreetsub").textContent=Math.round(g.road.d)+" m from the road centreline";
+  }else{
+    $("geostreet").textContent="No CBRM road data here";
+    $("geostreetsub").textContent="";
+  }
+  if(g.civic){
+    $("geocivic").textContent=g.civic.p.n+" "+g.civic.p.s;
+    $("geocivicsub").textContent=(g.civic.p.c?g.civic.p.c+" \u00B7 ":"")+Math.round(g.civic.d)+" m away";
+  }else{
+    $("geocivic").textContent="None in range"; $("geocivicsub").textContent="";
+  }
+  const cs=g.cs, known=geoHeading!=null, lines=[];
+  if(known){
+    if(cs.ahead)lines.push(csLine(cs.ahead,"Ahead: "));
+    if(cs.behind)lines.push(csLine(cs.behind,"Behind: "));
+  }else{
+    if(cs.ahead)lines.push(csLine(cs.ahead));
+    if(cs.behind)lines.push(csLine(cs.behind));
+  }
+  $("geocs").textContent=lines.length?lines.join("\n"):"\u2014";
+}
+function geoText(){
+  const g=geoCur; if(!g)return "";
+  const out=[g.road?(g.road.r.s||"unnamed road"):"No CBRM road data"];
+  if(g.civic)out.push("near "+g.civic.p.n+" "+g.civic.p.s+(g.civic.p.c?", "+g.civic.p.c:""));
+  const cs=g.cs;
+  if(geoHeading!=null&&cs.ahead&&cs.behind)out.push("between "+cs.behind.name+" and "+cs.ahead.name);
+  else{const n=[cs.ahead,cs.behind].filter(Boolean).map(x=>x.name); if(n.length)out.push("cross streets: "+n.join(", "));}
+  out.push("GPS \u00B1"+Math.round(g.acc)+" m");
+  return out.join(" \u00B7 ");
+}
+function onGeoFix(pos){
+  const c=pos.coords;
+  if(c.heading!=null&&!isNaN(c.heading)&&c.speed!=null&&c.speed>1.5)geoHeading=c.heading;
+  const f=geoFilter(c.latitude,c.longitude,c.accuracy,pos.timestamp,c.speed);
+  const road=nearestRoad(f.lon,f.lat);
+  geoCur={acc:f.acc,road:road,civic:nearestCivic(f.lon,f.lat),
+    cs:crossStreets(f.lon,f.lat,road&&road.r.s?road.r.s:null,geoHeading)};
+  renderGeo();
+}
+function onGeoErr(err){
+  geoSay(err&&err.code===1
+    ?"Location is blocked. Allow location for this site in your browser settings, then try again."
+    :"Can't get a GPS fix. Try again with a clear view of the sky.");
+  if(geoWatch!=null){navigator.geolocation.clearWatch(geoWatch);geoWatch=null;}
+  geoOn=false;
+  document.getElementById("geobtn").style.display="block";
+}
+async function startGeo(){
+  if(geoOn)return;
+  geoOn=true;
+  document.getElementById("geobtn").style.display="none";
+  if(!navigator.geolocation){geoSay("This device has no location support.");geoOn=false;document.getElementById("geobtn").style.display="block";return;}
+  geoSay("Loading map data\u2026");
+  try{await loadGeo();}
+  catch(e){
+    if(!geoOn)return;
+    geoSay("Map data is not available here. Open the installed app once with a signal to download it.");
+    geoOn=false; document.getElementById("geobtn").style.display="block"; return;
+  }
+  if(!geoOn)return;
+  geoSay("Finding your position\u2026");
+  geoFilter=makeGeoFilter();
+  geoWatch=navigator.geolocation.watchPosition(onGeoFix,onGeoErr,{enableHighAccuracy:true,maximumAge:1000,timeout:15000});
+}
+document.getElementById("geobtn").addEventListener("click",startGeo);
+document.getElementById("geocopy").addEventListener("click",()=>{
+  const t=geoText(), b=document.getElementById("geocopy");
+  const done=()=>{b.textContent="Copied";setTimeout(()=>{b.textContent="Copy location";},1200);};
   if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done).catch(done);
   else done();
 });
