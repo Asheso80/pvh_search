@@ -1402,12 +1402,12 @@ a.tel{color:var(--accent);text-decoration:none}
 .duelbl{display:block;font-size:12px;font-weight:700;letter-spacing:.06em;
   text-transform:uppercase;color:var(--faint);margin-bottom:14px}
 /* Phones draw a date field with their own styling (centred text, extra height,
-   a different width). Reset it so it matches the search box. */
+   a different width). Reset it so it matches the search box, with the date centred. */
 .duelbl input{display:block;width:100%;min-width:0;max-width:100%;height:48px;margin-top:6px;
   -webkit-appearance:none;appearance:none;border:1px solid var(--line);border-radius:12px;
   background:var(--panel);color:var(--text);font:inherit;font-size:17px;font-weight:400;
-  letter-spacing:normal;text-transform:none;text-align:left;line-height:46px;padding:0 12px}
-.duelbl input::-webkit-date-and-time-value{text-align:left;margin:0;min-height:1.2em}
+  letter-spacing:normal;text-transform:none;text-align:center;line-height:46px;padding:0 12px}
+.duelbl input::-webkit-date-and-time-value{text-align:center;margin:0;min-height:1.2em}
 .duelbl input::-webkit-calendar-picker-indicator{margin:0}
 .duenote{color:var(--faint);font-size:12px;text-align:center;padding:2px 0 10px}
 .geolbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
