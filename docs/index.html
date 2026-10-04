@@ -309,7 +309,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v16 · 2026-10-02";
+var APP_VERSION="v17 · 2026-10-03";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -1268,46 +1268,20 @@ function addYear(s){
   const due=new Date(d.getFullYear()+1,d.getMonth(),d.getDate());
   return String(due.getMonth()+1).padStart(2,"0")+"/"+String(due.getDate()).padStart(2,"0")+"/"+due.getFullYear();
 }
-function chkInto(out,soon,k,label,date){
+function chkInto(out,k,label,date){
   if(date==null||parseD(date)==null){out.push({k:k,label:label,date:null,miss:1,w:1e9});return;}
   const p=daysPast(date);
   if(p){out.push({k:k,label:label,date:date,over:p,w:p});return;}
-  if(soon){const u=daysUntil(date); if(u!=null&&u<=30)out.push({k:k,label:label,date:date,soon:u,w:-1-u});}
 }
-function vehFlagList(v,soon){
+function vehFlagList(v){
   const out=[];
-  chkInto(out,soon,"mvi","MVI",addYear(v["First MVIDate"]));
-  chkInto(out,soon,"permit","PVH License",v["Expiry Date"]);
-  chkInto(out,soon,"ins","Insurance",v["Insurance Expiry"]);
-  chkInto(out,soon,"vlic","NS Permit",v["NSVehicle Permit Expiry"]);
+  chkInto(out,"mvi","MVI",addYear(v["First MVIDate"]));
+  chkInto(out,"permit","PVH License",v["Expiry Date"]);
+  chkInto(out,"ins","Insurance",v["Insurance Expiry"]);
+  chkInto(out,"vlic","NS Permit",v["NSVehicle Permit Expiry"]);
   return out;
 }
-function opFlagList(o,soon){
-  const out=[];
-  if(o["In Active"]===true||o["Cancelled"]===true){
-    out.push({k:"inactive",label:o["Cancelled"]===true?"Cancelled":"Inactive",date:null,over:0,w:0});
-    return out;
-  }
-  chkInto(out,soon,"olic","Op licence",o["Renewal Date"]);
-  chkInto(out,soon,"nsdl","NS DL",o["NSDLExpired Date"]);
-  return out;
-}
-const FILTERS=[["all","All"],["veh","Vehicles"],["ops","Operators"],["permit","PVH License"],["ins","Insurance"],["vlic","NS Permit"],
-  ["mvi","MVI"],["olic","Op licence"],["nsdl","NS DL"],["inactive","Inactive"]];
-function buildFlagged(soon){
-  const vi=[],oi=[];
-  for(const v of V){const f=vehFlagList(v,soon); if(f.length)vi.push([v,f]);}
-  for(const o of O){const f=opFlagList(o,soon); if(f.length)oi.push([o,f]);}
-  return {vi,oi};
-}
-function flagBadges(f){
-  return '<div class="cardbadges">'+f.map(function(x){
-    if(x.miss)return '<span class="badge b-warn">'+x.label+' NONE ON FILE</span>';
-    if(x.soon!=null)return '<span class="badge b-warn">'+x.label+' in '+x.soon+'d</span>';
-    return '<span class="badge b-bad">'+x.label+(x.over>0?' '+x.over+'d over':'')+'</span>';
-  }).join("")+'</div>';
-}
-/* Long lists draw a page at a time. A common surname or the flagged list can be
+/* Long lists draw a page at a time. A common surname can be
    hundreds of cards, which is slow to draw and a long way to scroll. */
 var LIM={}, PAGE=25;
 function pg(id,arr,fn){
@@ -1319,33 +1293,6 @@ function pg(id,arr,fn){
   return h;
 }
 function pgMore(id){LIM[id]=(LIM[id]||PAGE)+50; keepScroll();}
-function renderFlags(fk,soon){
-  fk=fk||"all";
-  const all=buildFlagged(soon);
-  const cnt={all:all.vi.length+all.oi.length,veh:all.vi.length,ops:all.oi.length};
-  for(const[,f]of all.vi)for(const x of f)cnt[x.k]=(cnt[x.k]||0)+1;
-  for(const[,f]of all.oi)for(const x of f)cnt[x.k]=(cnt[x.k]||0)+1;
-  let vshow=all.vi,oshow=all.oi;
-  if(fk==="veh")oshow=[];
-  else if(fk==="ops")vshow=[];
-  else if(fk!=="all"){
-    vshow=all.vi.filter(([,f])=>f.some(x=>x.k===fk)).map(([v,f])=>[v,f.filter(x=>x.k===fk)]);
-    oshow=all.oi.filter(([,f])=>f.some(x=>x.k===fk)).map(([o,f])=>[o,f.filter(x=>x.k===fk)]);
-  }
-  const worst=f=>Math.max(...f.map(x=>x.w));
-  vshow.sort((a,b)=>worst(b[1])-worst(a[1]));
-  oshow.sort((a,b)=>worst(b[1])-worst(a[1]));
-  let h='<div class="fchips">'+FILTERS.map(([k,l])=>
-    '<div class="fchip'+(k===fk?" on":"")+'" onclick="go(\'flags/'+k+(soon?"/soon":"")+'\')">'+l+
-    ' \u00B7 '+(cnt[k]||0)+'</div>').join("")+
-    '<div class="fchip'+(soon?" on":"")+'" onclick="go(\'flags/'+fk+(soon?"":"/soon")+'\')">\u226430d '+(soon?"ON":"OFF")+'</div></div>';
-  if(vshow.length)h+='<div class="seclabel">Vehicles ('+vshow.length+')</div>'+
-    pg("fv"+fk+(soon?"s":""),vshow,([v,f])=>vehCard(v,flagBadges(f)));
-  if(oshow.length)h+='<div class="seclabel">Operators ('+oshow.length+')</div>'+
-    pg("fo"+fk+(soon?"s":""),oshow,([o,f])=>opCard(o,flagBadges(f)));
-  if(!vshow.length&&!oshow.length)h+='<div class="hint">Nothing flagged in this category.</div>';
-  main.innerHTML=h;
-}
 const RECENT=[];
 function noteRecent(id){
   const ix=RECENT.indexOf(id); if(ix>-1)RECENT.splice(ix,1);
@@ -1417,7 +1364,7 @@ const STAT_OPTS=[["","Any status"],["expired","Any expired"],["permit","PVH Lice
   ["mvi","MVI overdue"],["vlic","NS Permit exp"],["ok","All valid"]];
 function vehMatchesStat(v,s){
   if(!s)return true;
-  const fl=vehFlagList(v,false).filter(x=>!x.miss);
+  const fl=vehFlagList(v).filter(x=>!x.miss);
   const keys=fl.map(x=>x.k);
   if(s==="expired")return keys.length>0;
   if(s==="ok")return keys.length===0;
@@ -1436,25 +1383,9 @@ function renderHome(q){
   const r=search(q||"");
   if(!r){
     if(HFILTER.type||HFILTER.stat){renderBrowse();return;}
-    const fl=buildFlagged(false), n=fl.vi.length+fl.oi.length;
-    const cnt={};
-    for(const v of V)for(const x of vehFlagList(v,false).filter(y=>!y.miss))cnt[x.k]=(cnt[x.k]||0)+1;
-    const shortcut=(k,label)=>cnt[k]?'<div class="fchip" onclick="go(\'flags/'+k+'\')">'+label+' \u00B7 '+cnt[k]+'</div>':'';
     main.innerHTML='<div class="hint">Search by deck light number, plate, owner or operator name, business or licence number.</div>'+
       '<div class="browsebar">'+selectEl("fType",TYPE_OPTS,HFILTER.type)+selectEl("fStat",STAT_OPTS,HFILTER.stat)+'</div>'+
       actionCard()+
-      (fl.vi.length?'<div class="card" onclick="go(\'flags/veh\')">'+
-        '<div class="opdot" style="color:var(--bad);border-color:var(--bad)">&#9888;</div>'+
-        '<div class="cmain"><div class="cname">'+fl.vi.length+' vehicle'+(fl.vi.length===1?'':'s')+' flagged</div>'+
-        '<div class="csub">PVH licence, insurance, NS Permit or MVI expired or missing</div></div>'+
-        '<div class="chev">&#8250;</div></div>':'')+
-      '<div class="fchips" style="margin-top:8px">'+shortcut("permit","PVH Licenses")+shortcut("ins","Insurance")+
-        shortcut("mvi","MVI")+shortcut("vlic","NS Permit")+'</div>'+
-      (fl.oi.length?'<div class="card" onclick="go(\'flags/ops\')">'+
-        '<div class="opdot" style="color:var(--bad);border-color:var(--bad)">&#9888;</div>'+
-        '<div class="cmain"><div class="cname">'+fl.oi.length+' operator'+(fl.oi.length===1?'':'s')+' flagged</div>'+
-        '<div class="csub">Operator or NS licence expired · inactive operators</div></div>'+
-        '<div class="chev">&#8250;</div></div>':'')+
       recentCards()+
       checkedCards()+
       shLine()+
@@ -1501,8 +1432,8 @@ var BSORT="over";
 function renderBrowse(){
   let list=applyBrowseFilters(V.slice());
   if(BSORT==="over")list.sort((a,b)=>{
-    const wa=Math.max(0,...vehFlagList(a,false).filter(x=>!x.miss).map(x=>x.w));
-    const wb=Math.max(0,...vehFlagList(b,false).filter(x=>!x.miss).map(x=>x.w));
+    const wa=Math.max(0,...vehFlagList(a).filter(x=>!x.miss).map(x=>x.w));
+    const wb=Math.max(0,...vehFlagList(b).filter(x=>!x.miss).map(x=>x.w));
     return wb-wa;});
   else if(BSORT==="deck")list.sort((a,b)=>String(a["Deck No"]||"~").localeCompare(String(b["Deck No"]||"~"),undefined,{numeric:true}));
   else if(BSORT==="owner")list.sort((a,b)=>ownerName(a).localeCompare(ownerName(b)));
@@ -1519,7 +1450,7 @@ function renderBrowse(){
 }
 function setSort(s){BSORT=s;renderBrowse();}
 function statBadgesInline(v){
-  const fl=vehFlagList(v,false).filter(x=>!x.miss);
+  const fl=vehFlagList(v).filter(x=>!x.miss);
   if(!fl.length)return "";
   return '<div class="cardbadges">'+fl.map(x=>'<span class="badge b-bad">'+x.label+(x.over>0?" "+x.over+"d":"")+'</span>').join("")+'</div>';
 }
@@ -1682,14 +1613,12 @@ function go(route){location.hash="#/"+route;}
 function route(){
   const h=location.hash.replace(/^#\/?/,"");
   const m=/^(v|o|w)\/(\d+)$/.exec(h);
-  const fm=/^flags(?:\/([a-z]+))?(\/soon)?$/.exec(h);
   const sp=(h==="shared"||h==="actions");
   window.scrollTo(0,0);
-  document.getElementById("back").style.display=(m||fm||sp)?"flex":"none";
+  document.getElementById("back").style.display=(m||sp)?"flex":"none";
   if(h==="shared"){ renderShared(); }
   else if(h==="actions"){ renderActions(); }
   else if(m){ if(m[1]==="v") renderVehicle(+m[2]); else if(m[1]==="o") renderOperator(+m[2]); else renderOwner(+m[2]); }
-  else if(fm){ renderFlags(fm[1],!!fm[2]); }
   else { renderHome(q.value); }
 }
 document.body.classList.add("light");
