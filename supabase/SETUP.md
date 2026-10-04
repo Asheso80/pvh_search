@@ -103,7 +103,8 @@ screen, and signs in once. The device stays signed in.
 
 - The free plan pauses a project after about a week with no activity. Daily
   field use keeps it awake; if it ever pauses, restore it from the dashboard.
-- Notes cannot be edited or deleted from the app. A mistaken note is removed in
-  **Table Editor → notes**.
+- Officers can edit or remove their own notes from the app, never anyone else's.
+  Nothing is erased: see the edit and removal history above. A note by someone who
+  has left can only be corrected by you, in **Table Editor → notes**.
 - Free-plan projects have no point-in-time backups. Export `notes` and `checks`
   from the Table Editor now and then if the history matters.
