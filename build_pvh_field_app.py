@@ -1376,6 +1376,19 @@ a.tel{color:var(--accent);text-decoration:none}
 }
 .browsebar select:focus,.fchip:focus-visible,.copybtn:focus-visible,
 .card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* due date sheet: slides over the current page, so the record underneath is kept */
+.sheetbg{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.45);
+  display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:100%;max-width:640px;background:var(--bg);border-top:1px solid var(--line);
+  border-radius:16px 16px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
+.dueval{font-size:28px;font-weight:700;line-height:1.2;margin:2px 0 4px}
+.duesub{color:var(--dim);font-size:13px;margin-bottom:14px}
+.duelbl{display:block;font-size:12px;font-weight:700;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--faint);margin-bottom:14px}
+.duelbl input{display:block;width:100%;height:48px;margin-top:6px;border:1px solid var(--line);
+  border-radius:12px;background:var(--panel);color:var(--text);font-size:17px;padding:0 12px}
+.duenote{color:var(--faint);font-size:12px;text-align:center;padding-top:2px}
 </style>
 </head>
 <body>
@@ -1384,6 +1397,7 @@ a.tel{color:var(--accent);text-decoration:none}
     <div class="hrow">
       <button class="navbtn" id="back" onclick="history.back()" style="display:none">&#8592;</button>
       <h1>PVH Field Lookup<small id="stamp"></small></h1>
+      <button class="navbtn" id="duebtn" title="Due date">&#128197;</button>
       <button class="navbtn" id="theme" title="Toggle dark mode">&#9789;</button>
     </div>
     <div id="searchwrap">
@@ -1393,6 +1407,17 @@ a.tel{color:var(--accent);text-decoration:none}
     </div>
   </header>
   <div id="toast" style="display:none"></div>
+  <div class="sheetbg" id="duesheet" style="display:none">
+    <div class="sheet" role="dialog" aria-label="Due date">
+      <div class="seclabel" style="margin-top:0">Due date</div>
+      <div class="dueval" id="dueval"></div>
+      <div class="duesub" id="duesub"></div>
+      <label class="duelbl">Ticket issued<input type="date" id="dueissued"></label>
+      <button class="copybtn" id="duecopy">Copy due date</button>
+      <button class="copybtn" id="dueclose" style="color:var(--dim)">Close</button>
+      <div class="duenote">Check the courts' closure list if the date is close to a holiday.</div>
+    </div>
+  </div>
   <main id="main"></main>
 </div>
 __DATA_SCRIPT__
@@ -2716,6 +2741,89 @@ document.body.classList.add("light");
 document.getElementById("theme").addEventListener("click",()=>{
   const light=document.body.classList.toggle("light");
   document.getElementById("theme").innerHTML=light?"&#9789;":"&#9788;";
+});
+/* ---------- due date ---------- */
+/* Day 30 from the issue date, moved forward to the next Friday the courts are
+   open. Only a closure that lands on a Friday can change the result, so the
+   Monday holidays are listed for completeness. Review against the Courts of
+   Nova Scotia closure list each year. Provincial closure dates that are not
+   fixed holidays go in EXTRA_CLOSURES as "YYYY-MM-DD". */
+const EXTRA_CLOSURES=[];
+function localDay(y,m,d){return new Date(y,m,d,12,0,0,0);}
+function ymd(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+function nthWeekday(y,m,wd,n){
+  const first=localDay(y,m,1);
+  return localDay(y,m,1+(wd-first.getDay()+7)%7+7*(n-1));
+}
+function easterSunday(y){
+  const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,
+    f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,
+    i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),
+    t=h+l-7*m+114;
+  return localDay(y,Math.floor(t/31)-1,t%31+1);
+}
+function nsHolidays(y){
+  const easter=easterSunday(y), vic=localDay(y,4,24);
+  vic.setDate(24-(vic.getDay()+6)%7);
+  return [
+    localDay(y,0,1),                                   // New Year's Day
+    nthWeekday(y,1,1,3),                               // Heritage Day
+    localDay(y,easter.getMonth(),easter.getDate()-2),  // Good Friday
+    vic,                                               // Victoria Day
+    localDay(y,6,1),                                   // Canada Day
+    nthWeekday(y,7,1,1),                               // Natal Day
+    nthWeekday(y,8,1,1),                               // Labour Day
+    localDay(y,8,30),                                  // Truth and Reconciliation
+    nthWeekday(y,9,1,2),                               // Thanksgiving
+    localDay(y,10,11),                                 // Remembrance Day
+    localDay(y,11,25),                                 // Christmas Day
+    localDay(y,11,26)                                  // Boxing Day
+  ];
+}
+function courtClosed(d){
+  const k=ymd(d);
+  return EXTRA_CLOSURES.indexOf(k)>-1||nsHolidays(d.getFullYear()).some(h=>ymd(h)===k);
+}
+function dueDate(issued){
+  const day30=localDay(issued.getFullYear(),issued.getMonth(),issued.getDate()+30);
+  const d=new Date(day30), skipped=[];
+  while(d.getDay()!==5)d.setDate(d.getDate()+1);
+  while(courtClosed(d)&&skipped.length<60){skipped.push(new Date(d));d.setDate(d.getDate()+7);}
+  return {day30:day30,due:d,skipped:skipped};
+}
+function fmtDay(d){
+  return ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d.getDay()]+" "+
+    ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getMonth()]+" "+
+    String(d.getDate()).padStart(2,"0")+", "+d.getFullYear();
+}
+function showDue(){
+  const v=document.getElementById("dueissued").value, el=document.getElementById("dueval"),
+    sub=document.getElementById("duesub"), btn=document.getElementById("duecopy");
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  if(!m){el.textContent="—";sub.textContent="Enter the date the ticket was issued.";btn.disabled=true;return;}
+  const r=dueDate(localDay(+m[1],+m[2]-1,+m[3]));
+  btn.disabled=false;
+  el.textContent=fmtDay(r.due);
+  sub.textContent="Day 30 is "+fmtDay(r.day30)+(r.skipped.length?". Court closed "+
+    r.skipped.map(fmtDay).join(", ")+".":".");
+}
+function openDue(){
+  const t=new Date();
+  document.getElementById("dueissued").value=ymd(t);
+  showDue();
+  document.getElementById("duesheet").style.display="flex";
+}
+function closeDue(){document.getElementById("duesheet").style.display="none";}
+document.getElementById("duebtn").addEventListener("click",openDue);
+document.getElementById("dueclose").addEventListener("click",closeDue);
+document.getElementById("duesheet").addEventListener("click",e=>{if(e.target.id==="duesheet")closeDue();});
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDue();});
+document.getElementById("dueissued").addEventListener("input",showDue);
+document.getElementById("duecopy").addEventListener("click",()=>{
+  const t=document.getElementById("dueval").textContent, b=document.getElementById("duecopy");
+  const done=()=>{b.textContent="Copied";setTimeout(()=>{b.textContent="Copy due date";},1200);};
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done).catch(done);
+  else done();
 });
 q.addEventListener("input",()=>{
   LIM={};
