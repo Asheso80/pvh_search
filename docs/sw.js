@@ -1,4 +1,4 @@
-const C="pvh-shell-9c055f17", G="pvh-geo-626ed5c1";
+const C="pvh-shell-a4871cff", G="pvh-geo-626ed5c1";
 /* geo.bin is public map data, held in its own cache so a shell update does not
    re-download it. It is fetched at install so location works offline. */
 self.addEventListener("install",e=>{e.waitUntil(Promise.all([
