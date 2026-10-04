@@ -1404,7 +1404,6 @@ a.tel{color:var(--accent);text-decoration:none}
 .duelbl input{display:block;width:100%;height:48px;margin-top:6px;border:1px solid var(--line);
   border-radius:12px;background:var(--panel);color:var(--text);font-size:17px;padding:0 12px}
 .duenote{color:var(--faint);font-size:12px;text-align:center;padding:2px 0 10px}
-.geohead{margin:14px 2px 10px;padding-top:16px;border-top:1px solid var(--line)}
 .geolbl{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
   color:var(--faint);margin-top:12px}
 .geoval{font-size:20px;font-weight:700;line-height:1.25;white-space:pre-line}
@@ -1421,7 +1420,8 @@ a.tel{color:var(--accent);text-decoration:none}
     <div class="hrow">
       <button class="navbtn" id="back" onclick="history.back()" style="display:none">&#8592;</button>
       <h1>PVH Field Lookup<small id="stamp"></small></h1>
-      <button class="navbtn" id="duebtn" title="Due date and location">&#128197;</button>
+      <button class="navbtn" id="duebtn" title="Due date" aria-label="Due date"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
+      <button class="navbtn" id="locbtn" title="Location" aria-label="Location"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg></button>
       <button class="navbtn" id="theme" title="Toggle dark mode">&#9789;</button>
     </div>
     <div id="searchwrap">
@@ -1432,16 +1432,20 @@ a.tel{color:var(--accent);text-decoration:none}
   </header>
   <div id="toast" style="display:none"></div>
   <div class="sheetbg" id="duesheet" style="display:none">
-    <div class="sheet" role="dialog" aria-label="Due date and location">
+    <div class="sheet" role="dialog" aria-label="Due date">
       <div class="seclabel" style="margin-top:0">Due date</div>
       <div class="dueval" id="dueval"></div>
       <div class="duesub" id="duesub"></div>
       <label class="duelbl">Ticket issued<input type="date" id="dueissued"></label>
-      <button class="copybtn" id="duecopy">Copy due date</button>
       <div class="duenote">Check the courts' closure list if the date is close to a holiday.</div>
-      <div class="seclabel geohead">Location</div>
-      <button class="copybtn" id="geobtn">Find my location</button>
+      <button class="copybtn" id="dueclose" style="color:var(--dim)">Close</button>
+    </div>
+  </div>
+  <div class="sheetbg" id="geosheet" style="display:none">
+    <div class="sheet" role="dialog" aria-label="Location">
+      <div class="seclabel" style="margin-top:0">Location</div>
       <div class="geostatus" id="geostatus"></div>
+      <button class="copybtn" id="geobtn" style="display:none">Try again</button>
       <div id="geobox" style="display:none">
         <div class="geoacc"><span class="geodot" id="geodot"></span><span id="geoacc"></span></div>
         <div class="geolbl">Street</div>
@@ -1452,10 +1456,9 @@ a.tel{color:var(--accent);text-decoration:none}
         <div class="geosub" id="geocivicsub"></div>
         <div class="geolbl">Cross streets</div>
         <div class="geoval" id="geocs"></div>
-        <button class="copybtn" id="geocopy" style="margin-top:14px">Copy location</button>
       </div>
-      <div class="duenote" id="geonote" style="display:none">Contains information licensed under the Open Government Licence &ndash; Nova Scotia. Field aid only, not a legal record.</div>
-      <button class="copybtn" id="dueclose" style="color:var(--dim)">Close</button>
+      <div class="duenote" id="geonote" style="display:none;padding-top:14px">Contains information licensed under the Open Government Licence &ndash; Nova Scotia. Field aid only, not a legal record.</div>
+      <button class="copybtn" id="geoclose" style="color:var(--dim)">Close</button>
     </div>
   </div>
   <main id="main"></main>
@@ -2838,11 +2841,10 @@ function fmtDay(d){
 }
 function showDue(){
   const v=document.getElementById("dueissued").value, el=document.getElementById("dueval"),
-    sub=document.getElementById("duesub"), btn=document.getElementById("duecopy");
+    sub=document.getElementById("duesub");
   const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
-  if(!m){el.textContent="—";sub.textContent="Enter the date the ticket was issued.";btn.disabled=true;return;}
+  if(!m){el.textContent="—";sub.textContent="Enter the date the ticket was issued.";return;}
   const r=dueDate(localDay(+m[1],+m[2]-1,+m[3]));
-  btn.disabled=false;
   el.textContent=fmtDay(r.due);
   sub.textContent="Day 30 is "+fmtDay(r.day30)+(r.skipped.length?". Court closed "+
     r.skipped.map(fmtDay).join(", ")+".":".");
@@ -2853,21 +2855,15 @@ function openDue(){
   showDue();
   document.getElementById("duesheet").style.display="flex";
 }
-function closeDue(){document.getElementById("duesheet").style.display="none";stopGeo();}
+function closeDue(){document.getElementById("duesheet").style.display="none";}
 document.getElementById("duebtn").addEventListener("click",openDue);
 document.getElementById("dueclose").addEventListener("click",closeDue);
 document.getElementById("duesheet").addEventListener("click",e=>{if(e.target.id==="duesheet")closeDue();});
-document.addEventListener("keydown",e=>{if(e.key==="Escape")closeDue();});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeDue();closeGeo();}});
 document.getElementById("dueissued").addEventListener("input",showDue);
-document.getElementById("duecopy").addEventListener("click",()=>{
-  const t=document.getElementById("dueval").textContent, b=document.getElementById("duecopy");
-  const done=()=>{b.textContent="Copied";setTimeout(()=>{b.textContent="Copy due date";},1200);};
-  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done).catch(done);
-  else done();
-});
 /* ---------- location ---------- */
-/* GPS runs only while the sheet is open, and only after "Find my location" is
-   tapped. Map data is the public NS Civic Address File for CBRM (docs/geo.bin,
+/* GPS starts when the location button is tapped and stops when its sheet
+   closes. Map data is the public NS Civic Address File for CBRM (docs/geo.bin,
    gzipped JSON), fetched on first use and then held by the service worker. */
 let GEO=null, GCELL=0, geoWatch=null, geoOn=false, geoHeading=null, geoCur=null, geoFilter=null;
 const R_EARTH=6371000, D2R=Math.PI/180;
@@ -2974,7 +2970,7 @@ function geoReset(){
   geoCur=null; geoHeading=null; geoFilter=null;
   document.getElementById("geobox").style.display="none";
   document.getElementById("geonote").style.display="none";
-  document.getElementById("geobtn").style.display="block";
+  document.getElementById("geobtn").style.display="none";
   geoSay("");
 }
 function stopGeo(){
@@ -3012,16 +3008,6 @@ function renderGeo(){
   }
   $("geocs").textContent=lines.length?lines.join("\n"):"\u2014";
 }
-function geoText(){
-  const g=geoCur; if(!g)return "";
-  const out=[g.road?(g.road.r.s||"unnamed road"):"No CBRM road data"];
-  if(g.civic)out.push("near "+g.civic.p.n+" "+g.civic.p.s+(g.civic.p.c?", "+g.civic.p.c:""));
-  const cs=g.cs;
-  if(geoHeading!=null&&cs.ahead&&cs.behind)out.push("between "+cs.behind.name+" and "+cs.ahead.name);
-  else{const n=[cs.ahead,cs.behind].filter(Boolean).map(x=>x.name); if(n.length)out.push("cross streets: "+n.join(", "));}
-  out.push("GPS \u00B1"+Math.round(g.acc)+" m");
-  return out.join(" \u00B7 ");
-}
 function onGeoFix(pos){
   const c=pos.coords;
   if(c.heading!=null&&!isNaN(c.heading)&&c.speed!=null&&c.speed>1.5)geoHeading=c.heading;
@@ -3056,13 +3042,18 @@ async function startGeo(){
   geoFilter=makeGeoFilter();
   geoWatch=navigator.geolocation.watchPosition(onGeoFix,onGeoErr,{enableHighAccuracy:true,maximumAge:1000,timeout:15000});
 }
+function openGeo(){
+  document.getElementById("geosheet").style.display="flex";
+  startGeo();
+}
+function closeGeo(){
+  document.getElementById("geosheet").style.display="none";
+  stopGeo();
+}
+document.getElementById("locbtn").addEventListener("click",openGeo);
+document.getElementById("geoclose").addEventListener("click",closeGeo);
+document.getElementById("geosheet").addEventListener("click",e=>{if(e.target.id==="geosheet")closeGeo();});
 document.getElementById("geobtn").addEventListener("click",startGeo);
-document.getElementById("geocopy").addEventListener("click",()=>{
-  const t=geoText(), b=document.getElementById("geocopy");
-  const done=()=>{b.textContent="Copied";setTimeout(()=>{b.textContent="Copy location";},1200);};
-  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done).catch(done);
-  else done();
-});
 q.addEventListener("input",()=>{
   LIM={};
   clr.style.display=q.value?"block":"none";
