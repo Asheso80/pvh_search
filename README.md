@@ -101,10 +101,16 @@ work — a `file://` page cannot register a service worker.
 ## Shared notes and checks
 
 Officers can write a note on any vehicle, owner or operator record, and mark an
-action as needed or done. Deliberate "Checked" marks are shared too, so the check
-history shows who checked a record and when. Both live in a Supabase project;
-**nothing else is shared** -- the records, search, and the passing "seen" history
-stay on the device.
+action as needed or done. Two kinds of activity are shared too, each with the
+officer's account name and the time (`10/09/26 @ 1535Hrs`):
+
+- **Queried** -- logged automatically when someone opens a record (at most once
+  per officer per record every 30 minutes). Someone looked, for whatever reason.
+- **Stopped** -- the "Record a stop" button, for an actual stop.
+
+All of it lives in a Supabase project; **nothing else is shared** -- the records
+and search stay on the device. An existing project needs
+`supabase/003_queries.sql` run once for Queried (see `supabase/SETUP.md`).
 
 - A note appears only on the record it was written on, never on a related record.
 - A record with notes shows an amber **NOTES n** chip in search results and a strip

@@ -42,6 +42,18 @@ on conflict (id) do update set display_name = excluded.display_name;
 To remove someone's access, delete their row from `profiles` (they can still
 sign in but see nothing), or delete the user.
 
+## Upgrading an existing project: shared "Queried" log
+
+If the project was set up before the Queried log existed, run
+`supabase/003_queries.sql` once in the SQL editor. It is safe to run again. A
+fresh project does not need it: `schema.sql` already includes it.
+
+It adds a `queries` table: one row each time an officer opens a record (at most
+once per officer per record every 30 minutes), stamped by the database with the
+officer's display name and the time. Until it has run, everything else works;
+queries are simply not shared, and the app quietly drops the ones it could not
+send rather than flagging them as refused.
+
 ## Upgrading an existing project: edit and remove notes
 
 If the project was set up before edit/remove existed, run
