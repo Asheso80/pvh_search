@@ -67,6 +67,17 @@ main{flex:1;padding:10px 12px 40px}
 .stamp{color:var(--faint);font-size:11px;text-align:center;padding:14px 0 4px}
 .seclabel{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
   color:var(--faint);margin:16px 2px 6px}
+/* Search result groups. Bigger than seclabel on purpose: a long result list
+   has to show at a glance where Vehicles end and Owners begin. */
+.reshead{display:flex;align-items:center;gap:8px;margin:18px 0 8px;padding:9px 12px;
+  background:var(--panel2);border-left:4px solid var(--accent);border-radius:8px;
+  font-size:15px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:var(--text)}
+.reshead .n{margin-left:auto;font-size:13px;font-weight:700;letter-spacing:0;
+  background:var(--accent);color:var(--bg);border-radius:10px;padding:1px 9px}
+.jump{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;padding-top:6px}
+.jump span{font-size:13px;font-weight:600;color:var(--accent);background:var(--panel);
+  border:1px solid var(--line);border-radius:14px;padding:4px 11px;cursor:pointer}
+.jump span:active{background:var(--panel2)}
 
 /* result cards */
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
@@ -101,6 +112,7 @@ main{flex:1;padding:10px 12px 40px}
 .t-Tour{background:rgba(77,163,255,.14);color:var(--tour)}
 .clchk{background:rgba(95,174,255,.16);color:var(--accent)}
 .clseen{background:var(--panel2);color:var(--faint)}
+.clwhen{text-transform:none;letter-spacing:0}
 .pairnote{display:inline-flex;align-items:center;gap:6px;margin-top:7px;
   padding:4px 9px;border-radius:7px;font-size:12px;font-weight:600;
   color:var(--accent);background:rgba(95,174,255,.12);
@@ -112,7 +124,7 @@ main{flex:1;padding:10px 12px 40px}
 .clpanel.clrecent{border-color:rgba(95,174,255,.5);background:rgba(95,174,255,.10)}
 .cllabel{font-size:11px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;
   color:var(--faint);flex:0 0 auto}
-.clline{flex:1 1 120px;color:var(--text)}
+.clline{flex:1 1 230px;color:var(--text)}
 .clpanel.clrecent .clline{color:var(--accent)}
 /* shared notes */
 .nt{background:rgba(247,190,74,.2);color:var(--warn)}
@@ -127,6 +139,9 @@ main{flex:1;padding:10px 12px 40px}
 .chlist{flex:0 0 100%;border-top:1px solid var(--line);padding-top:8px;margin-top:2px}
 .chrow{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:13px;color:var(--dim)}
 .chrow b{color:var(--text)}
+.chrow b.chstop{color:var(--accent)}
+.clrow{display:block}
+.clq{color:var(--dim);font-size:14px}
 .chlink{white-space:nowrap;font-weight:600}
 .ntgone{background:var(--panel2);border-style:dashed}
 .ntgone .nthead b{color:var(--dim);font-weight:600}
@@ -144,7 +159,7 @@ main{flex:1;padding:10px 12px 40px}
 .clpanel.joined{margin-bottom:0;border-bottom-left-radius:0;border-bottom-right-radius:0}
 .ntbar.joined{margin-top:0;border-top-width:0;border-top-left-radius:0;border-top-right-radius:0;margin-bottom:10px}
 .joined .cllabel{display:none}
-.joined .clline{flex:1 1 140px;min-width:0}
+.joined .clline{flex:1 1 230px;min-width:0}
 .ntprevs{flex:0 0 100%;border-top:1px solid rgba(255,99,99,.35);padding-top:8px}
 .ntprev{font-size:15px;line-height:1.35;color:var(--text);cursor:pointer;margin-bottom:6px;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -369,7 +384,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v22 · 2026-10-03";
+var APP_VERSION="v23 · 2026-10-09";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 document.getElementById("stamp").textContent =
@@ -496,8 +511,9 @@ function vehCard(v,extra){
    mirrors norm_master() in the builder so an entry survives the same prefix
    and spacing noise the operator dedup already absorbs.
 
-   Per-device only. Nothing syncs; another officer's checks are not visible
-   here, and clearing the browser's storage loses it. */
+   This is the device's own copy. With shared notes signed in, stops and
+   queries are also sent to the other officers (see clMarkK); this log is what
+   keeps working offline and with sharing off. */
 var CLOG_KEY="pvh_check_log", CLOG_DAYS=180, CLOG_MAX=900, CLOG=null;
 function clKey(o){
   var s=String(o["Master Number"]==null?"":o["Master Number"]).trim().toUpperCase();
@@ -522,7 +538,8 @@ function clLoad(){
   }catch(e){CLOG={};}
   return CLOG;
 }
-/* Entries are [lastSeen, lastChecked] in epoch seconds, 0 for never. Pruned
+/* Entries are [lastQueried, lastStopped, lastQuerySent] in epoch seconds, 0
+   for never. Pruned
    on every write so the log cannot grow without bound on a handset. */
 function clSave(){
   var m=clLoad(), cut=Math.floor(Date.now()/1000)-CLOG_DAYS*86400;
@@ -537,25 +554,54 @@ function clSave(){
   }
   try{localStorage.setItem(CLOG_KEY,JSON.stringify(m));}catch(e){}
 }
-/* "Seen" is this device's alone. "Checked" is the later of this device's mark
-   and the shared one from the other officers, with the name of whoever made
+/* Two levels, both shared when signed in. "Queried" (seen) is logged whenever
+   a record is opened -- someone looked, for whatever reason. "Stopped"
+   (checked) is the deliberate button for an actual stop. Each is the later of
+   this device's own entry and the shared one, with the name of whoever made
    it. */
 function clGetK(k){
-  var e=clLoad()[k], sh=SC.checks[k];
+  var e=clLoad()[k], sh=SC.checks[k], sq=SC.queries[k], me=(AU&&AU.name)||"";
   var lc=(e&&e[1])||0, st=(sh&&sh.t)||0, by="";
   if(st&&st>=lc)by=sh.by||"";
-  else if(lc)by=(AU&&AU.name)||"";
-  return {k:k, seen:(e&&e[0])||0, checked:Math.max(lc,st), by:by};
+  else if(lc)by=me;
+  var ls=(e&&e[0])||0, qt=(sq&&sq.t)||0, qby="";
+  if(qt&&qt>=ls)qby=sq.by||"";
+  else if(ls)qby=me||"you";
+  return {k:k, seen:Math.max(ls,qt), qby:qby, checked:Math.max(lc,st), by:by};
 }
+/* A query is sent at most once per record every QUERY_GAP seconds from this
+   device, so flicking back and forth during one encounter logs it once. The
+   time of the last one sent is the entry's third slot. */
+var QUERY_GAP=1800;
 function clMarkK(k,deliberate,label){
-  var m=clLoad(), e=m[k]||[0,0];
-  e[deliberate?1:0]=Math.floor(Date.now()/1000);
+  var m=clLoad(), e=m[k]||[0,0,0], now=Math.floor(Date.now()/1000);
+  e[deliberate?1:0]=now;
+  var sendQ=!deliberate&&shOn()&&!!AU&&now-(e[2]||0)>=QUERY_GAP;
+  if(sendQ)e[2]=now;
   m[k]=e; clSave();
-  if(deliberate&&shOn()&&AU){
-    OB.push({type:"check",row:{id:uid(),rec_key:k,rec_label:String(label||"").slice(0,200),
-      written_at:new Date().toISOString()}});
-    obSave(); shSync(true);
+  if(!shOn()||!AU||!(deliberate||sendQ))return;
+  OB.push({type:deliberate?"check":"query",row:{id:uid(),rec_key:k,rec_label:String(label||"").slice(0,200),
+    written_at:new Date(now*1000).toISOString()}});
+  obSave(); shSync(true);
+}
+/* Called by the record pages. The query panel reports who looked BEFORE this
+   visit -- otherwise it would only ever show the look being taken now -- and
+   that snapshot is held while the page is redrawn (a sync, a Stop tap), so the
+   officer's own query does not replace it mid-visit. A visit is a fresh route,
+   set by route(); a redraw of the same page is not one. */
+var VS=null, FRESH=false;
+function visitOpen(k,label){
+  if(FRESH||!VS||VS.k!==k){
+    var p=clGetK(k); VS={k:k,seen:p.seen,qby:p.qby};
+    clMarkK(k,false,label);
   }
+  var s=clGetK(k); s.seen=VS.seen; s.qby=VS.qby;
+  return s;
+}
+/* 10/09/26 @ 1535Hrs -- the format officers write in their notebooks. */
+function fmtWhen(t){
+  var d=new Date(t*1000), p=function(n){return (n<10?"0":"")+n;};
+  return p(d.getMonth()+1)+"/"+p(d.getDate())+"/"+p(d.getFullYear()%100)+" @ "+p(d.getHours())+p(d.getMinutes())+"Hrs";
 }
 /* An owner and an operator record can be the same human -- 164 of 200 owners
    link to one. Where they do, the owner's history IS the driver's history, so
@@ -593,16 +639,12 @@ function clAgo(ts){
   if(d<60)return Math.round(d/7)+" weeks ago";
   return Math.round(d/30)+" months ago";
 }
-function clShort(ts){
-  if(!ts)return "";
-  var d=clDays(ts);
-  return d<=0?"today":(d<7?d+"d":(d<60?Math.round(d/7)+"w":Math.round(d/30)+"mo"));
-}
-/* A marked check outranks a passing look, so only the stronger one shows. */
+/* Both show: a recent query does not replace an older stop. Actual date and
+   time, and who, rather than "1d" -- an officer needs to know whether it was
+   this shift or the one before. */
 function clChipsFor(s){
-  if(s.checked)return '<span class="chip clchk">Checked '+clShort(s.checked)+'</span>';
-  if(s.seen)return '<span class="chip clseen">seen '+clShort(s.seen)+'</span>';
-  return "";
+  return (s.checked?'<span class="chip clchk clwhen">Stopped '+esc(fmtWhen(s.checked))+(s.by?' \u00B7 '+esc(s.by):'')+'</span>':'')+
+    (s.seen?'<span class="chip clseen clwhen">Queried '+esc(fmtWhen(s.seen))+(s.qby?' \u00B7 '+esc(s.qby):'')+'</span>':'');
 }
 function clChips(o){return clChipsFor(clGet(o));}
 function clChipsV(v){return clChipsFor(clGetV(v));}
@@ -611,9 +653,9 @@ function clMarkW(w,deliberate){clMarkK(clKeyW(w),deliberate,ownerName(w));}
 function clChipsW(w){return clChipsFor(clGetW(w));}
 
 /* ---------- Shared notes and checks ----------
-   Notes written on a record, and deliberate "Checked" marks, are shared
-   between officers through a Supabase project. Everything else -- search,
-   the records, the passing "seen" history -- stays on the device.
+   Notes written on a record, "Stopped" marks and "Queried" looks are shared
+   between officers through a Supabase project. Everything else --
+   search and the records themselves -- stays on the device.
 
    Offline first, same rule as the rest of the app. Reads come from a copy kept
    on the device; anything an officer writes goes into an outbox on the device
@@ -634,13 +676,14 @@ var SH=(DB.shared&&DB.shared.url&&DB.shared.key)?DB.shared:null;
 var SC_KEY="pvh_shared_cache", OB_KEY="pvh_outbox", AU_KEY="pvh_auth";
 function jget(k,d){try{var r=localStorage.getItem(k);return r?JSON.parse(r):d;}catch(e){return d;}}
 function jset(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
-function emptySC(){return {notes:{},checks:{},hist:{},ev:{},nSince:"",cSince:"",at:0};}
+function emptySC(){return {notes:{},checks:{},hist:{},ev:{},queries:{},qhist:{},nSince:"",cSince:"",qSince:"",at:0};}
 var SC=jget(SC_KEY,null);
 if(!SC||typeof SC!=="object"||!SC.notes||!SC.checks)SC=emptySC();
 /* A cache written before the check list existed has only each record's latest
    check. Start its check pull from scratch so the list backfills. */
 if(!SC.hist){SC.hist={}; SC.cSince="";}
 if(!SC.ev){SC.ev={}; SC.eSince="";}
+if(!SC.queries){SC.queries={}; SC.qhist={}; SC.qSince="";}
 var OB=jget(OB_KEY,[]); if(!Array.isArray(OB))OB=[];
 var AU=jget(AU_KEY,null);
 var SYNC={busy:false,err:"",lastTry:0};
@@ -649,10 +692,14 @@ function shOn(){return !!SH;}
 function shSigned(){return !!(AU&&AU.refresh);}
 function scSave(){
   var cut=Date.now()/1000-CLOG_DAYS*86400;
-  Object.keys(SC.checks).forEach(function(k){if((SC.checks[k].t||0)<cut)delete SC.checks[k];});
-  Object.keys(SC.hist).forEach(function(k){
-    SC.hist[k]=SC.hist[k].filter(function(x){return x.t>=cut;});
-    if(!SC.hist[k].length)delete SC.hist[k];
+  [SC.checks,SC.queries].forEach(function(m){
+    Object.keys(m).forEach(function(k){if((m[k].t||0)<cut)delete m[k];});
+  });
+  [SC.hist,SC.qhist].forEach(function(m){
+    Object.keys(m).forEach(function(k){
+      m[k]=m[k].filter(function(x){return x.t>=cut;});
+      if(!m[k].length)delete m[k];
+    });
   });
   NIDX=null; jset(SC_KEY,SC);
 }
@@ -748,6 +795,7 @@ function shFlush(){
     var op=OB[i], req;
     if(op.type==="note")req=shApi("POST","/rest/v1/notes",op.row,"return=minimal");
     else if(op.type==="check")req=shApi("POST","/rest/v1/checks",op.row,"return=minimal");
+    else if(op.type==="query")req=shApi("POST","/rest/v1/queries",op.row,"return=minimal");
     else if(op.type==="edit")req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
       {body:op.body},"return=minimal");
     else if(op.type==="remove")req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
@@ -758,6 +806,10 @@ function shFlush(){
       if((r.status>=200&&r.status<300)||r.status===409){OB.splice(i,1); obSave(); return next();}
       if(r.status===401||r.status===403)throw {auth:true,refused:true};
       if(r.status>=500||r.status===408||r.status===429)throw {net:true};
+      /* A query is a passing record of a look, not something an officer wrote.
+         One the server will not take (say the queries table has not been
+         added yet) is dropped rather than parked as "refused". */
+      if(op.type==="query"){OB.splice(i,1); obSave(); return next();}
       op.failed=(r.json&&(r.json.message||r.json.hint))||("HTTP "+r.status);
       obSave(); CHG=true; i++; return next();
     });
@@ -794,21 +846,32 @@ function pullNotes(){
     });
   }).then(function(s){SC.nSince=s;});
 }
+/* Checks (stops) and queries arrive the same way: the latest per record for
+   the chips, and a capped newest-first list per record for the history. */
+function mergeMarks(rows,latest,hist){
+  rows.forEach(function(c){
+    var t=tsParse(c.written_at), cur=latest[c.rec_key];
+    if(!cur||t>cur.t){latest[c.rec_key]={t:t,by:c.author_name||""}; CHG=true;}
+    var h=hist[c.rec_key]||(hist[c.rec_key]=[]);
+    if(!h.some(function(x){return x.i===c.id;})){
+      h.push({i:c.id,t:t,by:c.author_name||""});
+      h.sort(function(a,b){return b.t-a.t;});
+      if(h.length>CH_KEEP)h.length=CH_KEEP;
+      CHG=true;
+    }
+  });
+}
 function pullChecks(){
   var since=SC.cSince||new Date(Date.now()-CLOG_DAYS*864e5).toISOString();
-  return pullPages("checks","created_at",since,function(rows){
-    rows.forEach(function(c){
-      var t=tsParse(c.written_at), cur=SC.checks[c.rec_key];
-      if(!cur||t>cur.t){SC.checks[c.rec_key]={t:t,by:c.author_name||""}; CHG=true;}
-      var h=SC.hist[c.rec_key]||(SC.hist[c.rec_key]=[]);
-      if(!h.some(function(x){return x.i===c.id;})){
-        h.push({i:c.id,t:t,by:c.author_name||""});
-        h.sort(function(a,b){return b.t-a.t;});
-        if(h.length>CH_KEEP)h.length=CH_KEEP;
-        CHG=true;
-      }
-    });
-  }).then(function(s){SC.cSince=s;});
+  return pullPages("checks","created_at",since,function(rows){mergeMarks(rows,SC.checks,SC.hist);})
+    .then(function(s){SC.cSince=s;});
+}
+/* Never allowed to fail a sync: until 003_queries.sql has been run there is
+   no such table, and everything else still works. */
+function pullQueries(){
+  var since=SC.qSince||new Date(Date.now()-CLOG_DAYS*864e5).toISOString();
+  return pullPages("queries","created_at",since,function(rows){mergeMarks(rows,SC.queries,SC.qhist);})
+    .then(function(s){SC.qSince=s;},function(e){if(e&&(e.net||e.auth))throw e;});
 }
 /* Earlier text of edited notes. Never allowed to fail a sync: until the
    database has been upgraded there is no such table, and notes still work. */
@@ -836,7 +899,7 @@ function shSync(force){
   if(!shOn()||!shSigned()||SYNC.busy)return Promise.resolve();
   if(!force&&Date.now()-SYNC.lastTry<20000)return Promise.resolve();
   SYNC.busy=true; SYNC.lastTry=Date.now(); CHG=false;
-  return shFlush().then(pullNotes).then(pullChecks).then(pullEvents).then(function(){
+  return shFlush().then(pullNotes).then(pullChecks).then(pullQueries).then(pullEvents).then(function(){
     SYNC.err=""; SC.at=Math.floor(Date.now()/1000); scSave();
   }).catch(function(e){
     if(e&&e.auth)SYNC.err=(AU&&AU.dead)?"Signed out — sign in again to send and receive.":
@@ -1131,7 +1194,7 @@ function renderShared(){
   main.innerHTML=h+(AU&&AU.dead
     ?'<div class="ntwarn">The saved sign-in no longer works. Sign in again'+(OB.length?' — the '+OB.length+
       ' item'+(OB.length===1?'':'s')+' waiting to send will go out afterwards':'')+'.</div>'
-    :'<div class="notes">Sign in with the account the administrator set up for you. Notes and "Checked" marks are then '+
+    :'<div class="notes">Sign in with the account the administrator set up for you. Notes, stops and queries are then '+
       'shared with the other officers. Signing in needs a signal once; after that the app works offline and sends '+
       'anything pending when it reconnects.</div>')+
     '<input id="shem" class="dsinput" type="email" inputmode="email" autocomplete="username" spellcheck="false" '+
@@ -1189,14 +1252,15 @@ setTimeout(function(){shSync(true);},400);
 function pairNote(arrow,where){
   return '<div class="pairnote"><b>'+arrow+'</b> Same person \u00B7 see '+where+'</div>';
 }
-/* Every shared check on a record, newest first, plus this device's own marks
-   that have not been sent yet. Nothing here is drawn until someone taps. */
+/* Every shared stop and query on a record, newest first, plus this device's
+   own that have not been sent yet. Nothing here is drawn until someone taps. */
 var CH_OPEN={}, CH_KEYS=[];
 function chList(k){
-  var out=(SC.hist[k]||[]).map(function(x){return {t:x.t,by:x.by,pending:false};});
+  var out=(SC.hist[k]||[]).map(function(x){return {t:x.t,by:x.by,stop:true,pending:false};})
+    .concat((SC.qhist[k]||[]).map(function(x){return {t:x.t,by:x.by,stop:false,pending:false};}));
   OB.forEach(function(op){
-    if(op.type==="check"&&op.row.rec_key===k)
-      out.push({t:tsParse(op.row.written_at),by:(AU&&AU.name)||"",pending:true});
+    if((op.type==="check"||op.type==="query")&&op.row.rec_key===k)
+      out.push({t:tsParse(op.row.written_at),by:(AU&&AU.name)||"",stop:op.type==="check",pending:true});
   });
   out.sort(function(a,b){return b.t-a.t;});
   return out;
@@ -1214,27 +1278,31 @@ function chMore(n){
 function chBlock(s,n,l){
   var lim=CH_OPEN[s.k]; if(!lim)return "";
   var rows=l.slice(0,lim).map(function(x){
-    return '<div class="chrow"><b>'+esc(x.by||"?")+'</b><span>'+esc(ntWhen(x.t))+
-      (x.pending?' \u00B7 waiting to send':'')+'</span></div>';}).join("");
+    return '<div class="chrow"><span><b class="'+(x.stop?'chstop':'')+'">'+(x.stop?'Stopped':'Queried')+'</b> '+esc(x.by||"?")+'</span>'+
+      '<span>'+esc(fmtWhen(x.t))+(x.pending?' \u00B7 waiting to send':'')+'</span></div>';}).join("");
   return '<div class="chlist">'+rows+(l.length>lim?
     '<div class="chrow"><span class="link" onclick="chMore('+n+')">Show all ('+l.length+')</span></div>':'')+'</div>';
 }
 function clPanel(s,handler){
-  var line=s.checked
-    ?'<b>Checked '+esc(clAgo(s.checked))+(s.by?' by '+esc(s.by):'')+'</b>'+(s.seen?' \u00B7 you saw '+esc(clAgo(s.seen)):'')
-    :(s.seen?'Not checked \u00B7 you saw '+esc(clAgo(s.seen)):(shOn()?'Not checked':'Not checked on this device'));
+  var local=shOn()?"":" on this device";
+  var line='<span class="clrow">'+(s.checked
+      ?'<b>Stopped '+esc(fmtWhen(s.checked))+(s.by?' \u00B7 '+esc(s.by):'')+'</b>'
+      :'No stop recorded'+local)+'</span>'+
+    '<span class="clrow clq">'+(s.seen
+      ?'Queried '+esc(fmtWhen(s.seen))+(s.qby?' \u00B7 '+esc(s.qby):'')
+      :'Not queried before'+local)+'</span>';
   /* The list only exists with sharing on, and only earns a link once there is
-     more than the one check the line already states. */
+     more than the latest stop and query the lines already state. */
   var l=shOn()?chList(s.k):[], n=-1, link="", blk="";
-  if(l.length>1){
+  if(l.length>(s.checked?1:0)+(s.seen?1:0)){
     n=CH_KEYS.indexOf(s.k); if(n<0){CH_KEYS.push(s.k); n=CH_KEYS.length-1;}
     link=' <span class="link chlink" onclick="chToggle('+n+')">'+(CH_OPEN[s.k]?'Hide':'History ('+l.length+')')+'</span>';
     blk=chBlock(s,n,l);
   }
   return '<div class="clpanel'+((s.checked&&clDays(s.checked)<14)?' clrecent':'')+(shOn()?' joined':'')+'">'+
-    '<span class="cllabel">Check history</span>'+
+    '<span class="cllabel">Stops &amp; queries</span>'+
     '<span class="clline">'+line+link+'</span>'+
-    '<button class="clbtn" onclick="'+handler+'">'+(s.checked?'Mark again':'Mark as checked')+'</button>'+
+    '<button class="clbtn" onclick="'+handler+'">'+(s.checked?'Record another stop':'Record a stop')+'</button>'+
     blk+
     '</div>';
 }
@@ -1254,7 +1322,7 @@ function markCheckedW(i){
   renderOwner(i);
 }
 function clearCheckLog(){
-  if(!confirm("Clear this device's check history? It cannot be undone, and this is the only copy."))return;
+  if(!confirm("Clear this device's own stop and query history? Anything already shared with other officers stays shared."))return;
   try{localStorage.removeItem(CLOG_KEY);}catch(e){}
   CLOG=null;
   renderHome(q.value);
@@ -1279,8 +1347,8 @@ function checkedCards(){
     return e.t==="o"?opCard(O[e.i]):(e.t==="v"?vehCard(V[e.i]):ownerCard(W[e.i]));
   }).filter(Boolean).slice(0,6).join("");
   if(!rows)return "";
-  return '<div class="seclabel">Checked recently</div>'+rows+
-    '<div class="hint"><span class="link" onclick="clearCheckLog()">Clear check history</span></div>';
+  return '<div class="seclabel">Stopped recently</div>'+rows+
+    '<div class="hint"><span class="link" onclick="clearCheckLog()">Clear this device\'s history</span></div>';
 }
 
 function opCard(o,extra){
@@ -1353,6 +1421,12 @@ function pg(id,arr,fn){
   return h;
 }
 function pgMore(id){LIM[id]=(LIM[id]||PAGE)+50; keepScroll();}
+/* The header is sticky, so land the group heading just below it, not under it. */
+function jumpTo(k){
+  var el=document.getElementById("rh-"+k); if(!el)return;
+  var hd=document.querySelector("header"), off=(hd?hd.offsetHeight:0)+6;
+  window.scrollTo({top:el.getBoundingClientRect().top+window.scrollY-off,behavior:"smooth"});
+}
 const RECENT=[];
 function noteRecent(id){
   const ix=RECENT.indexOf(id); if(ix>-1)RECENT.splice(ix,1);
@@ -1461,16 +1535,22 @@ function renderHome(q){
     wireFilters();
     return;
   }
-  let h='<div class="counts">'+r.v.length+' vehicle'+(r.v.length===1?"":"s")+', '+r.o.length+' operator'+(r.o.length===1?"":"s")+', '+r.w.length+' owner'+(r.w.length===1?"":"s")+'</div>';
+  /* With more than one group in the result, a row of jump links so Owners or
+     Operators are one tap away instead of a scroll past every vehicle. */
+  const grps=[["v","Vehicles",r.v.length],["w","Owners",r.w.length],["o","Operators",r.o.length]].filter(g=>g[2]);
+  let h=grps.length>1
+    ?'<div class="jump">'+grps.map(g=>'<span onclick="jumpTo(\''+g[0]+'\')">'+g[1]+' '+g[2]+' ↓</span>').join("")+'</div>'
+    :'<div class="counts">'+r.v.length+' vehicle'+(r.v.length===1?"":"s")+', '+r.o.length+' operator'+(r.o.length===1?"":"s")+', '+r.w.length+' owner'+(r.w.length===1?"":"s")+'</div>';
+  const rh=(k,label,n)=>'<div class="reshead" id="rh-'+k+'">'+label+'<span class="n">'+n+'</span></div>';
   /* An owner-operator surfaces once as an owner and once as an operator.
      Flag the pair only when both sides actually made the result set. */
   const oInResult=new Set(r.o.map(o=>o._i));
   const pairedOps=new Set();
   r.w.forEach(w=>{if(w._op!=null&&oInResult.has(w._op))pairedOps.add(w._op);});
-  if(r.v.length){h+='<div class="seclabel">Vehicles ('+r.v.length+')</div>'+pg("sv",r.v,v=>vehCard(v));}
-  if(r.w.length){h+='<div class="seclabel">Owners ('+r.w.length+')</div>'+
+  if(r.v.length){h+=rh("v","Vehicles",r.v.length)+pg("sv",r.v,v=>vehCard(v));}
+  if(r.w.length){h+=rh("w","Owners",r.w.length)+
     pg("sw",r.w,w=>ownerCard(w,(w._op!=null&&oInResult.has(w._op))?pairNote("\u2193","Operators"):""));}
-  if(r.o.length){h+='<div class="seclabel">Operators ('+r.o.length+')</div>'+
+  if(r.o.length){h+=rh("o","Operators",r.o.length)+
     pg("so",r.o,o=>opCard(o,pairedOps.has(o._i)?pairNote("\u2191","Owners"):""));}
   if(!r.v.length&&!r.o.length&&!r.w.length){
     // U4: absence-as-signal
@@ -1541,8 +1621,7 @@ function renderVehicle(i){
      vehicle was looked at rather than the look being taken now. Kept separate
      from the driver's history on purpose -- the same car may be out with a
      different operator, so a vehicle check says nothing about the driver. */
-  const priorV=clGetV(v);
-  clMarkV(v,false);
+  const priorV=visitOpen(clKeyV(v),vehLabel(v));
   const owner=(v._owner!=null)?W[v._owner]:null;
   const others=owner?(owner._veh||[]).map(ix=>V[ix]).filter(x=>x!==v):[];
   const op=(v._op!=null)?O[v._op]:null;
@@ -1589,8 +1668,7 @@ function renderOperator(i){
   noteRecent("o/"+i);
   /* Read the log before recording this visit, otherwise the page would only
      ever report the look being taken right now. */
-  const prior=clGet(o);
-  clMark(o,false);
+  const prior=visitOpen(clKey(o),opName(o));
   const flag=(o["In Active"]===true||o["Cancelled"]===true);
   const ownedW=W.filter(w=>w._op===i);
   let h="";
@@ -1640,8 +1718,7 @@ function renderOperator(i){
 function renderOwner(i){
   const w=W[i]; if(!w){renderHome("");return;}
   noteRecent("w/"+i);
-  const priorW=clGetW(w);
-  clMarkW(w,false);
+  const priorW=visitOpen(clKeyW(w),ownerName(w));
   const op=(w._op!=null)?O[w._op]:null;
   let h='<div class="dhead"><div class="dtop">'+
     '<div class="opdot" style="flex:0 0 66px;height:66px;font-size:22px">'+
@@ -1670,8 +1747,12 @@ function renderOwner(i){
 /* ---------- routing ---------- */
 const q=document.getElementById("q"), clr=document.getElementById("clr");
 function go(route){location.hash="#/"+route;}
+var ROUTE_LAST=null;
 function route(){
   const h=location.hash.replace(/^#\/?/,"");
+  /* A new page is a visit (and logs a query); the same page drawn again by a
+     sync or keepScroll is not. */
+  FRESH=(h!==ROUTE_LAST); ROUTE_LAST=h;
   const m=/^(v|o|w)\/(\d+)$/.exec(h);
   const sp=(h==="shared"||h==="actions");
   window.scrollTo(0,0);
@@ -1680,6 +1761,7 @@ function route(){
   else if(h==="actions"){ renderActions(); }
   else if(m){ if(m[1]==="v") renderVehicle(+m[2]); else if(m[1]==="o") renderOperator(+m[2]); else renderOwner(+m[2]); }
   else { renderHome(q.value); }
+  FRESH=false;
 }
 document.body.classList.add("light");
 document.getElementById("theme").addEventListener("click",()=>{
