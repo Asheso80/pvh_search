@@ -4,6 +4,9 @@ PVH_Field_App.html
 PVH_data.json
 *.xlsx
 
+# Intel export (pvh_intel.py): notes, links and profiles -- personal information.
+intel/
+
 # Operations note — records where the data lives and how access works.
 # Kept outside the published repo on purpose.
 PVH_operations_note.md

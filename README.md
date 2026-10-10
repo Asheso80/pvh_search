@@ -133,6 +133,26 @@ records. Signing out removes it.
 
 ---
 
+## Intel export (PC only)
+
+`Build_PVH_Intel.bat` (or `python pvh_intel.py`) signs in to Supabase as you,
+pulls every note, stop and query, joins them to `PVH_data.json`, and writes to
+`intel/` (gitignored -- personal information; keep it on the PC):
+
+- `PVH_Intel.xlsx` -- Profiles, Driver-Vehicle (NOT ON FILE flagged), Links,
+  Notes, Activity (for pivots), Monthly, Officers, Hour x Weekday
+- `PVH_Intel_Map.html` -- clickable relationship map
+- `gephi_nodes.csv` / `gephi_edges.csv` -- Gephi *File > Import spreadsheet*
+- `PVH_Intel.graphml` -- Gephi, Cytoscape, yEd, Neo4j
+
+Links come from the records (owner -> vehicle), from notes that name another
+record (plate, licence no., "deck 211", full name), and from one officer
+touching a vehicle and a person within 15 minutes. Your email is remembered in
+`pvh_local_config.json` as `intel_email`; the password is asked each run and
+never stored. `python pvh_intel.py --offline` rebuilds from the last pull.
+
+---
+
 ## What the app shows
 
 Where each status badge comes from in the source export:
