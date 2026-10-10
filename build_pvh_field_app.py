@@ -2530,7 +2530,7 @@ function pgMore(id){LIM[id]=(LIM[id]||PAGE)+50; keepScroll();}
 function jumpTo(k){
   var el=document.getElementById("rh-"+k); if(!el)return;
   var hd=document.querySelector("header"), off=(hd?hd.offsetHeight:0)+6;
-  window.scrollTo({top:el.getBoundingClientRect().top+window.scrollY-off,behavior:"smooth"});
+  window.scrollTo(0,el.getBoundingClientRect().top+window.scrollY-off);
 }
 const RECENT=[];
 function noteRecent(id){
@@ -3152,7 +3152,7 @@ clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
 window.markChecked=markChecked;window.markCheckedV=markCheckedV;
 window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
-window.pgMore=pgMore;window.ntShow=ntShow;window.ntDismiss=ntDismiss;window.ntHist=ntHist;window.ntEdit=ntEdit;window.ntEditCancel=ntEditCancel;
+window.pgMore=pgMore;window.jumpTo=jumpTo;window.ntShow=ntShow;window.ntDismiss=ntDismiss;window.ntHist=ntHist;window.ntEdit=ntEdit;window.ntEditCancel=ntEditCancel;
 window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
 window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
 window.__route=route;
