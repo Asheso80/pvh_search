@@ -23,9 +23,12 @@ How links are found:
     On file        owner -> vehicle, from the PVH records
     Note mention   a note on one record names another: plate, vehicle or
                    operator licence number, "deck 211", or a full name
-    Same encounter one officer queried / stopped / noted a vehicle and a
-                   person within 15 minutes of each other
-A driver-vehicle link that is not backed by the records is flagged NOT ON FILE.
+    Same encounter one officer touched a vehicle and a person within 15
+                   minutes, with a Stop or Note on one of them, and no more
+                   than 2 vehicles / 2 people in that span (desk lookups are
+                   not encounters)
+A driver-vehicle pair is On file, Company driver (same company) or NOT ON FILE;
+decisions typed on the Driver-Vehicle sheet are kept in intel/link_reviews.csv.
 """
 
 import os
@@ -74,6 +77,37 @@ def s_(v):
 
 def alnum(s):
     return re.sub(r"[^A-Z0-9]", "", s_(s).upper())
+
+
+# ------------------------------------------------------------------ companies
+# Business names in the source are typed by hand: "CITY WIDE TAXI LTD - TOUR
+# OPERATOR", "CITYWIDE TAXI", "OVER SEAS TAXI INC", "SIVLERSTAR LIMOUSINE",
+# "CITY WIDE TAXI \ C-MAC TRANSPORTATION". Each part is cut down to its core
+# ("CITYWIDE", "OVERSEAS", "SILVERSTAR") and cores are compared loosely.
+CO_NOISE = set("""TAXI TAXIS CAB CABS LTD LIMITED INC INCORPORATED CO COMPANY CORP THE AND TOUR TOURS
+OPERATOR OPERATORS SEE NOTES NOTE CHECK FILE RE SOT DECEASED NOVA SCOTIA NS LIMO LIMOUSINE
+TRANSPORT TRANSPORTATION""".split())
+
+
+def co_cores(name):
+    out = set()
+    for part in re.split(r"\s+-\s*|\s*-\s+|[/\\;,(]", s_(name).upper()):
+        words = re.sub(r"[^A-Z ]", "", part.replace("'", "").replace("&", " ")).split()
+        core = "".join(w for w in words if w not in CO_NOISE)
+        if core:
+            out.add(core)
+    return out
+
+
+def co_match(a, b):
+    from difflib import SequenceMatcher
+    for x in co_cores(a):
+        for y in co_cores(b):
+            n = min(len(x), len(y))
+            if x == y or (n >= 4 and (x.startswith(y) or y.startswith(x))) or \
+               (n >= 6 and SequenceMatcher(None, x, y).ratio() >= 0.85):
+                return True
+    return False
 
 
 # ------------------------------------------------------------------ record keys
@@ -346,12 +380,18 @@ def analyse(model, snap):
                  {"officer": officers[oid], "when": when, "how": m["method"] + " \u201c" + m["text"] + "\u201d, " + m["confidence"],
                   "text": body, "confidence": m["confidence"]})
 
-    # same encounter: one officer, a vehicle and a person within 15 minutes
+    # Same encounter: one officer, a vehicle and a person within 15 minutes --
+    # but only when it looks like a stop. Opening records at a desk (checking
+    # this very workbook against the app, say) touches many records in a few
+    # minutes and is not an encounter, so a span with more than two vehicles or
+    # two people is skipped, and there has to be a Stop or a Note on one of the
+    # pair. Two queries alone are a lookup, not a sighting.
     by_off = defaultdict(list)
     for e in events:
         if e["when"]:
             by_off[e["oid"]].append(e)
     pair_last = {}
+    pad = datetime.timedelta(minutes=5)
     for oid, evs in by_off.items():
         evs.sort(key=lambda e: e["when"])
         for i, a in enumerate(evs):
@@ -360,6 +400,12 @@ def analyse(model, snap):
                     break
                 ta, tb = model.nodes[a["node"]]["type"], model.nodes[b["node"]]["type"]
                 if (ta == "Vehicle") == (tb == "Vehicle"):
+                    continue
+                span = [e for e in evs if a["when"] - pad <= e["when"] <= b["when"] + pad]
+                vehs = {e["node"] for e in span if model.nodes[e["node"]]["type"] == "Vehicle"}
+                if len(vehs) > 2 or len({e["node"] for e in span}) - len(vehs) > 2:
+                    continue
+                if not any(e["kind"] != "Query" and e["node"] in (a["node"], b["node"]) for e in span):
                     continue
                 pk = (oid,) + tuple(sorted((a["node"], b["node"])))
                 lw = pair_last.get(pk)
@@ -374,16 +420,162 @@ def analyse(model, snap):
     for e in events:
         model.nodes[e["node"]]["events"].append(e)
 
-    # driver <-> vehicle view, with the on-file check
-    dv = []
+    # driver <-> vehicle pairs: one per person and vehicle, however many ways
+    # they were linked, with the on-file / company check
+    pairs = {}
     for L in links.values():
         a, b = model.nodes[L["source"]], model.nodes[L["target"]]
         if (a["type"] == "Vehicle") == (b["type"] == "Vehicle"):
             continue
         veh, per = (a, b) if a["type"] == "Vehicle" else (b, a)
-        L["on_file"] = model.veh_owner.get(veh["id"]) == per["id"]
-        dv.append((veh, per, L))
-    return events, notes, links, dv, officers
+        pid = per["id"] + " | " + veh["id"]
+        P = pairs.get(pid)
+        if not P:
+            owner = model.veh_owner.get(veh["id"])
+            if owner == per["id"]:
+                base = "On file"
+            elif co_match(per["company"], veh["company"]) or \
+                    (owner in model.nodes and co_match(per["company"], model.nodes[owner]["company"])):
+                base = "Company driver"
+            else:
+                base = "NOT ON FILE"
+            P = pairs[pid] = {"id": pid, "veh": veh, "per": per, "owner": owner, "base": base, "links": [],
+                              "status": base, "review": None}
+        P["links"].append(L)
+        L["pair"] = pid
+    for P in pairs.values():
+        P["evidence"] = sorted((dict(ev, relation=L["relation"]) for L in P["links"] for ev in L["evidence"]),
+                               key=lambda e: e.get("when") or datetime.datetime.min.replace(tzinfo=TZ))
+    return events, notes, links, pairs, officers
+
+
+# ------------------------------------------------------------------ reviews
+# Decisions on driver-vehicle links, kept in intel/link_reviews.csv so they
+# survive every rebuild. They are typed into the Decision / Comment columns of
+# the Driver-Vehicle sheet; the next run reads them back before overwriting
+# the workbook. A hidden "_was" column holds what each row was written with,
+# so only cells actually changed in Excel count as edits -- the CSV can also be
+# edited directly.
+REVIEW_FILE = "link_reviews.csv"
+REVIEW_COLS = ["link_id", "driver", "vehicle", "decision", "comment", "reviewed", "ev_last", "ev_officers"]
+DECISIONS = ["Authorized driver", "False link", "Follow up"]
+OPEN = {"NOT ON FILE", "Follow up", "Reopened"}
+SEP = " || "
+
+
+def norm_decision(s):
+    t = s_(s).strip().lower()
+    if not t:
+        return ""
+    if t.startswith("auth"):
+        return "Authorized driver"
+    if t.startswith("false") or t.startswith("not"):
+        return "False link"
+    return "Follow up"
+
+
+def load_reviews(dir_):
+    import csv
+    p = os.path.join(dir_, REVIEW_FILE)
+    if not os.path.exists(p):
+        return {}
+    with open(p, newline="", encoding="utf-8-sig") as f:
+        return {r["link_id"]: r for r in csv.DictReader(f) if r.get("link_id")}
+
+
+def save_reviews(dir_, reviews):
+    import csv
+    import shutil
+    p = os.path.join(dir_, REVIEW_FILE)
+    if os.path.exists(p):
+        shutil.copyfile(p, p + ".bak")
+    with open(p, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=REVIEW_COLS, extrasaction="ignore")
+        w.writeheader()
+        for k in sorted(reviews):
+            w.writerow(reviews[k])
+
+
+def harvest_edits(xlsx_path):
+    """Decision / Comment cells the user changed in the last workbook."""
+    if not os.path.exists(xlsx_path):
+        return {}
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(xlsx_path, read_only=True, data_only=True)
+    except Exception as exc:   # a damaged or foreign file must not stop the run
+        print("  could not read decisions from " + os.path.basename(xlsx_path) + ": " + str(exc))
+        return {}
+    if "Driver-Vehicle" not in wb.sheetnames:
+        return {}
+    rows = wb["Driver-Vehicle"].iter_rows(values_only=True)
+    head = [s_(h) for h in next(rows, [])]
+    try:
+        ci, cd, cc, cw = (head.index(x) for x in ("Link ID", "Decision", "Comment", "_was"))
+    except ValueError:
+        return {}
+    out = {}
+    for r in rows:
+        lid = s_(r[ci]).strip() if ci < len(r) else ""
+        if not lid:
+            continue
+        dec, com = norm_decision(r[cd]), s_(r[cc]).strip()
+        if dec + SEP + com != s_(r[cw]):
+            out[lid] = (dec, com)
+    wb.close()
+    return out
+
+
+def apply_reviews(pairs, out_dir, xlsx_path):
+    reviews = load_reviews(out_dir)
+    edits = harvest_edits(xlsx_path)
+    today = datetime.datetime.now(TZ).strftime("%m/%d/%y")
+
+    def baseline(r, P):
+        ev = [e for e in P["evidence"] if e.get("when")]
+        r["ev_last"] = max(e["when"] for e in ev).isoformat() if ev else ""
+        r["ev_officers"] = ";".join(sorted({e.get("officer", "") for e in P["evidence"]}))
+
+    changed = 0
+    for lid, (dec, com) in edits.items():
+        changed += 1
+        if not dec and not com:
+            reviews.pop(lid, None)
+            continue
+        P = pairs.get(lid)
+        r = reviews.get(lid) or {"link_id": lid}
+        r.update({"decision": dec, "comment": com, "reviewed": today})
+        if P:
+            r["driver"], r["vehicle"] = P["per"]["label"], P["veh"]["label"]
+            baseline(r, P)
+        reviews[lid] = r
+    # A decision typed straight into the CSV has no baseline yet; take it now.
+    for lid, r in reviews.items():
+        if lid in pairs and not r.get("ev_last") and not r.get("ev_officers"):
+            baseline(r, pairs[lid])
+            changed += 1
+    if changed:
+        save_reviews(out_dir, reviews)
+    # Accepted links come back when new evidence arrives that the review did
+    # not see: a sighting by a different officer, or a new note naming them.
+    for lid, P in pairs.items():
+        r = reviews.get(lid)
+        if not r:
+            continue
+        P["review"] = r
+        dec = norm_decision(r.get("decision"))
+        if not dec:
+            continue
+        if dec == "Follow up":
+            P["status"] = "Follow up"
+            continue
+        last = parse_ts(r.get("ev_last"))
+        seen = set(s_(r.get("ev_officers")).split(";"))
+        fresh = [e for e in P["evidence"] if last and e.get("when") and e["when"] > last
+                 and (e.get("officer") not in seen or e.get("relation") == "Note mention")]
+        P["status"] = "Reopened" if fresh else dec
+        P["reopened_by"] = fresh
+    return len(edits)
 
 
 def active_set(model, links):
@@ -400,16 +592,20 @@ def active_set(model, links):
 
 
 # ------------------------------------------------------------------ outputs
-def write_xlsx(path, model, events, notes, links, dv, officers, act, meta):
+def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.formatting.rule import ColorScaleRule
+    from openpyxl.worksheet.datavalidation import DataValidation
     from openpyxl.utils import get_column_letter
 
     wb = Workbook()
     head = Font(bold=True, color="FFFFFF")
     fill = PatternFill("solid", fgColor="1F4E79")
     red = PatternFill("solid", fgColor="F8D7DA")
+    lilac = PatternFill("solid", fgColor="EAE4F7")
+    grey = PatternFill("solid", fgColor="EDEFF2")
+    edit = PatternFill("solid", fgColor="FFF4C2")
     wrap = Alignment(wrap_text=True, vertical="top")
 
     def sheet(title, cols, rows, widths=None, wrap_cols=()):
@@ -440,7 +636,7 @@ def write_xlsx(path, model, events, notes, links, dv, officers, act, meta):
         ["Notes / stops / queries", "%d / %d / %d" % (meta["n_notes"], meta["n_stops"], meta["n_queries"])], [],
         ["Sheets"],
         ["Profiles", "Every record with activity: counts, last activity, who, and what it links to."],
-        ["Driver-Vehicle", "Drivers linked to vehicles by notes or by the same encounter. NOT ON FILE = not the registered owner."],
+        ["Driver-Vehicle", "One row per driver and vehicle linked by notes or the same encounter. Review them here (below)."],
         ["Links", "Every link with its evidence."],
         ["Notes", "All notes, with the records each one mentions."],
         ["Activity", "One row per query / stop / note -- use for pivots."],
@@ -450,8 +646,21 @@ def write_xlsx(path, model, events, notes, links, dv, officers, act, meta):
         ["Link types"],
         ["On file", "Owner -> vehicle in the PVH records."],
         ["Note mention", "A note on one record names another (plate, licence no., deck, full name)."],
-        ["Same encounter", "One officer touched a vehicle and a person within 15 minutes."],
+        ["Same encounter", "One officer touched a vehicle and a person within 15 minutes, with a Stop or Note on one of them. Spans with more than 2 vehicles or 2 people (desk lookups) are ignored."],
         ["Confidence", "exact = one match; likely = deck number or encounter; possible = several records share that name or number -- verify."], [],
+        ["Driver-Vehicle status"],
+        ["On file", "The person is the vehicle's registered owner."],
+        ["Company driver", "Not the owner, but the person and the vehicle are with the same company. Usually routine."],
+        ["NOT ON FILE", "No registration or company connection. An open lead until reviewed."],
+        ["Authorized driver", "You reviewed it and it is fine. Greyed out."],
+        ["False link", "You reviewed it and the link is wrong (e.g. the note was about something else). Greyed out."],
+        ["Follow up", "You reviewed it and want to keep an eye on it. Stays open."],
+        ["Reopened", "You accepted it, but new evidence has come in since: another officer, or a new note. Look again."], [],
+        ["Reviewing a link"],
+        ["1", "On Driver-Vehicle, pick a Decision from the drop-down (yellow column) and add a Comment if useful."],
+        ["2", "Save and close this workbook."],
+        ["3", "Run Build_PVH_Intel.bat again (or python pvh_intel.py --offline). Decisions are saved to link_reviews.csv."],
+        ["", "To undo a decision, clear its Decision and Comment cells and run again."], [],
         ["This file holds personal information. Keep it on this PC; do not email or share it."],
     ]:
         ws.append(line)
@@ -465,10 +674,10 @@ def write_xlsx(path, model, events, notes, links, dv, officers, act, meta):
         adj[L["source"]].add(L["target"])
         adj[L["target"]].add(L["source"])
     nof = Counter()
-    for veh, per, L in dv:
-        if not L["on_file"]:
-            nof[veh["id"]] += 1
-            nof[per["id"]] += 1
+    for P in pairs.values():
+        if P["status"] in OPEN:
+            nof[P["veh"]["id"]] += 1
+            nof[P["per"]["id"]] += 1
     prof = []
     for nid in sorted(act, key=lambda k: -(N[k]["notes"] + N[k]["stops"] + N[k]["queries"])):
         n = N[nid]
@@ -483,26 +692,56 @@ def write_xlsx(path, model, events, notes, links, dv, officers, act, meta):
                      nof[nid] or "", "; ".join(sorted(lab(x) for x in adj[nid]))[:500],
                      "" if n["in_data"] else "Not in current data", nid])
     sheet("Profiles", ["Type", "Record", "Licence / plate", "Company", "Notes", "Stops", "Queries", "Last 30 days",
-                       "Last activity", "Last by", "Officers", "Top officers", "Busiest hour", "NOT ON FILE links",
+                       "Last activity", "Last by", "Officers", "Top officers", "Busiest hour", "Open leads",
                        "Linked to", "Flag", "Key"], prof,
           {"Record": 34, "Company": 24, "Linked to": 60, "Last activity": 18, "Last by": 22, "Top officers": 30, "Key": 22})
 
+    order = {"Reopened": 0, "Follow up": 1, "NOT ON FILE": 2, "Company driver": 3,
+             "Authorized driver": 4, "False link": 5, "On file": 6}
+    rank = lambda c: 0 if c == "exact" else (1 if c == "likely" else 2)
     rows = []
-    for veh, per, L in sorted(dv, key=lambda x: (x[2]["on_file"], -x[2]["count"])):
-        ev = L["evidence"][0] if L["evidence"] else {}
-        rows.append([per["label"], per["licence"], veh["label"], veh["plate"], veh["deck"],
-                     N[model.veh_owner[veh["id"]]]["label"] if veh["id"] in model.veh_owner else "",
-                     "Yes" if L["on_file"] else "NOT ON FILE", L["relation"], L["count"],
-                     fmt_when(L["first"]), fmt_when(L["last"]), ", ".join(L["officers"]),
-                     ev.get("confidence", ""), ev.get("how", ""), ev.get("text", "")[:500]])
-    ws = sheet("Driver-Vehicle", ["Driver / person", "Licence", "Vehicle", "Plate", "Deck", "Registered owner", "On file",
-                                  "Evidence", "Times", "First", "Last", "Officers", "Confidence", "How found", "Note"],
-               rows, {"Driver / person": 26, "Vehicle": 34, "Registered owner": 24, "First": 18, "Last": 18,
-                      "How found": 36, "Note": 60}, wrap_cols=("Note",))
+    for P in sorted(pairs.values(), key=lambda P: (order.get(P["status"], 9), -len(P["evidence"]))):
+        veh, per, r, ev = P["veh"], P["per"], P["review"] or {}, P["evidence"]
+        dec, com = norm_decision(r.get("decision")), s_(r.get("comment"))
+        kinds = Counter(e["relation"] for e in ev)
+        dated = [e["when"] for e in ev if e.get("when")]
+        notes_ev = [e for e in ev if e["relation"] == "Note mention"]
+        status = P["status"]
+        if status == "Reopened":
+            # Blank the decision so picking it again counts as a fresh review.
+            status += " (was " + dec + ") — new: " + \
+                "; ".join(sorted({e.get("officer", "") + " " + fmt_when(e.get("when")) for e in P["reopened_by"]}))
+            dec = ""
+        rows.append([status, dec, com, s_(r.get("reviewed")), per["label"], per["licence"], per["company"],
+                     veh["label"], veh["plate"], veh["deck"], veh["company"],
+                     N[P["owner"]]["label"] if P["owner"] in N else "",
+                     ", ".join(k + (" ×" + str(n) if n > 1 else "") for k, n in kinds.items()), len(ev),
+                     fmt_when(min(dated)) if dated else "", fmt_when(max(dated)) if dated else "",
+                     ", ".join(sorted({e.get("officer", "") for e in ev})),
+                     min((e.get("confidence", "") for e in ev), key=rank, default=""),
+                     ev[-1].get("how", "") if ev else "", (notes_ev[-1].get("text", "") if notes_ev else "")[:500],
+                     P["id"], dec + SEP + com])
+    cols = ["Status", "Decision", "Comment", "Reviewed", "Driver / person", "Licence", "Driver company", "Vehicle", "Plate",
+            "Deck", "Vehicle company", "Registered owner", "Evidence", "Times", "First", "Last", "Officers", "Confidence",
+            "Latest how found", "Latest note", "Link ID", "_was"]
+    ws = sheet("Driver-Vehicle", cols, rows,
+               {"Status": 22, "Decision": 18, "Comment": 36, "Driver / person": 26, "Driver company": 24, "Vehicle": 34,
+                "Vehicle company": 24, "Registered owner": 24, "Evidence": 26, "First": 18, "Last": 18,
+                "Latest how found": 36, "Latest note": 60, "Link ID": 34}, wrap_cols=("Latest note", "Comment"))
+    ws.column_dimensions[get_column_letter(len(cols))].hidden = True
     for row in ws.iter_rows(min_row=2):
-        if row[6].value == "NOT ON FILE":
+        st = row[0].value or ""
+        f = red if (st in OPEN or st.startswith("Reopened")) else lilac if st == "Company driver" else \
+            grey if st in ("Authorized driver", "False link", "On file") else None
+        if f:
             for c in row:
-                c.fill = red
+                c.fill = f
+        row[1].fill = row[2].fill = edit
+    if rows:
+        dv_ = DataValidation(type="list", formula1='"' + ",".join(DECISIONS) + '"', allow_blank=True,
+                             showErrorMessage=False)
+        ws.add_data_validation(dv_)
+        dv_.add("B2:B" + str(len(rows) + 1))
 
     rows = []
     for L in sorted(links.values(), key=lambda L: -L["count"]):
@@ -565,15 +804,22 @@ def write_xlsx(path, model, events, notes, links, dv, officers, act, meta):
     wb.save(path)
 
 
-def graph_rows(model, links, ring, officers_too=True):
+def graph_rows(model, links, ring, pairs, officers_too=True):
     N = model.nodes
     nodes = [N[k] for k in sorted(ring)]
     edges = []
     for v, o in model.veh_owner.items():
         if v in ring and o in ring:
             edges.append({"source": o, "target": v, "relation": "On file", "count": 1, "first": None, "last": None,
-                          "on_file": True, "officers": Counter(), "evidence": []})
-    edges += list(links.values())
+                          "status": "", "open": False, "officers": Counter(), "evidence": []})
+    # A driver-vehicle link carries its pair's status (company driver, open
+    # lead, reviewed...); every other link has none.
+    for L in links.values():
+        P = pairs.get(L.get("pair"))
+        L["status"] = P["status"] if P else ""
+        L["open"] = bool(P) and P["status"] in OPEN
+        L["comment"] = s_((P["review"] or {}).get("comment")) if P else ""
+        edges.append(L)
     off_nodes, off_edges = {}, []
     if officers_too:
         for k in ring:
@@ -584,13 +830,14 @@ def graph_rows(model, links, ring, officers_too=True):
                                       "company": "", "detail": "Officer", "in_data": True, "notes": 0, "stops": 0,
                                       "queries": 0, "events": [], "officers": Counter()}
                     off_edges.append({"source": oid, "target": k, "relation": {"Query": "Queried", "Stop": "Stopped", "Note": "Noted"}[kind],
-                                      "count": c, "first": None, "last": None, "officers": Counter(), "evidence": []})
+                                      "count": c, "first": None, "last": None, "status": "", "open": False,
+                                      "officers": Counter(), "evidence": []})
     return nodes + list(off_nodes.values()), edges + off_edges
 
 
-def write_gephi(dir_, model, links, ring):
+def write_gephi(dir_, model, links, ring, pairs):
     import csv
-    nodes, edges = graph_rows(model, links, ring)
+    nodes, edges = graph_rows(model, links, ring, pairs)
     with open(os.path.join(dir_, "gephi_nodes.csv"), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["Id", "Label", "Category", "Licence", "Plate", "Deck", "Company", "Notes", "Stops", "Queries", "InCurrentData"])
@@ -600,15 +847,16 @@ def write_gephi(dir_, model, links, ring):
     with open(os.path.join(dir_, "gephi_edges.csv"), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         # Gephi reads "Type" as Directed/Undirected, so the link kind goes in Relation.
-        w.writerow(["Source", "Target", "Type", "Weight", "Relation", "OnFile", "First", "Last"])
+        w.writerow(["Source", "Target", "Type", "Weight", "Relation", "Status", "OpenLead", "First", "Last"])
         for e in edges:
-            w.writerow([e["source"], e["target"], "Undirected", e["count"], e["relation"],
-                        "" if "on_file" not in e else ("yes" if e["on_file"] else "NOT ON FILE"),
+            w.writerow([e["source"], e["target"], "Undirected", e["count"], e["relation"], e["status"],
+                        "yes" if e["open"] else "",
                         e["first"].isoformat() if e["first"] else "", e["last"].isoformat() if e["last"] else ""])
     from xml.sax.saxutils import escape as x
     na = [("label", "string"), ("category", "string"), ("licence", "string"), ("plate", "string"), ("company", "string"),
           ("notes", "int"), ("stops", "int"), ("queries", "int")]
-    ea = [("relation", "string"), ("weight", "double"), ("onfile", "string"), ("first", "string"), ("last", "string")]
+    ea = [("relation", "string"), ("weight", "double"), ("status", "string"), ("openlead", "string"),
+          ("first", "string"), ("last", "string")]
     out = ['<?xml version="1.0" encoding="UTF-8"?>',
            '<graphml xmlns="http://graphml.graphdrawing.org/xmlns">']
     out += ['<key id="n_%s" for="node" attr.name="%s" attr.type="%s"/>' % (k, k, t) for k, t in na]
@@ -620,7 +868,7 @@ def write_gephi(dir_, model, links, ring):
         out.append('<node id="%s">' % x(n["id"], {'"': "&quot;"}) + "".join('<data key="n_%s">%s</data>' % (k, x(s_(vals[k]))) for k, _ in na) + "</node>")
     for i, e in enumerate(edges):
         vals = {"relation": e["relation"], "weight": e["count"],
-                "onfile": "" if "on_file" not in e else ("yes" if e["on_file"] else "NOT ON FILE"),
+                "status": e["status"], "openlead": "yes" if e["open"] else "",
                 "first": e["first"].isoformat() if e["first"] else "", "last": e["last"].isoformat() if e["last"] else ""}
         out.append('<edge id="e%d" source="%s" target="%s">' % (i, x(e["source"], {'"': "&quot;"}), x(e["target"], {'"': "&quot;"})) +
                    "".join('<data key="e_%s">%s</data>' % (k, x(s_(vals[k]))) for k, _ in ea) + "</edge>")
@@ -628,8 +876,8 @@ def write_gephi(dir_, model, links, ring):
     open(os.path.join(dir_, "PVH_Intel.graphml"), "w", encoding="utf-8").write("\n".join(out))
 
 
-def write_map(path, model, links, notes, ring, meta):
-    nodes, edges = graph_rows(model, links, ring)
+def write_map(path, model, links, notes, ring, pairs, meta):
+    nodes, edges = graph_rows(model, links, ring, pairs)
     N = model.nodes
     by_node = defaultdict(list)
     for nt in notes:
@@ -644,7 +892,7 @@ def write_map(path, model, links, notes, ring, meta):
                               "notes": by_node.get(n["id"], [])[:40]})
     for e in edges:
         data["edges"].append({"from": e["source"], "to": e["target"], "rel": e["relation"], "c": e["count"],
-                              "nof": ("on_file" in e and not e["on_file"]),
+                              "st": e["status"], "open": e["open"], "cm": e.get("comment", ""),
                               "ev": [[fmt_when(v.get("when")), v.get("officer", ""), v.get("how", ""), v.get("text", "")[:300]] for v in e["evidence"][:10]]})
     html = MAP_HTML.replace("__DATA__", json.dumps(data).replace("</", "<\\/"))
     open(path, "w", encoding="utf-8").write(html)
@@ -673,16 +921,22 @@ a{color:var(--accent);cursor:pointer}
 <header><b>PVH INTEL MAP</b><small id="meta"></small>
 <input type="search" id="q" placeholder="Find name, plate, licence…">
 <span id="types"></span>
-<label><input type="checkbox" id="onlynof"> Only NOT ON FILE</label>
+<label><input type="checkbox" id="onlynof"> Only open leads</label>
 </header>
 <div id="wrap"><div id="net"></div><div id="side"><div class="k">Click a record or a link for details.<br><br>
 Lines: <span style="color:#9aa5b1">grey</span> on file · <span style="color:#d9a21b">amber</span> note mention ·
-<span style="color:#3d8bfd">blue</span> same encounter · <span style="color:#c42b2b">red dashed</span> NOT ON FILE · dotted = officer activity</div></div></div>
+<span style="color:#3d8bfd">blue</span> same encounter · dotted = officer activity<br>
+Driver-vehicle: <span style="color:#c42b2b">red dashed</span> open lead (NOT ON FILE, Follow up ⚑, Reopened) ·
+<span style="color:#8e6fd1">purple dashed</span> company driver · <span style="color:#b8bfc8">pale dashed</span> reviewed (authorized / false link)<br><br>
+To review a link, use the Decision column on the Driver-Vehicle sheet in PVH_Intel.xlsx, then run the export again.</div></div></div>
 <script>
 const D=__DATA__;
 const COL={"Vehicle":"#f0b429","Operator":"#3d8bfd","Owner-operator":"#7b61ff","Owner":"#8a94a3","Officer":"#2fb67c","Record":"#bbb"};
 const SHAPE={"Vehicle":"box","Officer":"diamond"};
 const ECOL={"On file":"#9aa5b1","Note mention":"#d9a21b","Same encounter":"#3d8bfd"};
+const SCOL={"Company driver":"#8e6fd1","Authorized driver":"#b8bfc8","False link":"#b8bfc8"};
+const ecol=e=>e.open?"#c42b2b":(SCOL[e.st]||ECOL[e.rel]||"#2fb67c");
+const flag=e=>e.st==="Follow up"||e.st==="Reopened"?" \u2691":"";
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 document.getElementById("meta").textContent="pulled "+D.meta.pulled+" · "+D.meta.n_notes+" notes · "+D.meta.n_stops+" stops · "+D.meta.n_queries+" queries";
 const byId={};D.nodes.forEach(n=>byId[n.id]=n);
@@ -693,11 +947,12 @@ const act=n=>n.n+n.s+n.q;
 const nodes=new vis.DataSet(D.nodes.map(n=>({id:n.id,label:n.label.length>34?n.label.slice(0,32)+"…":n.label,
   shape:SHAPE[n.type]||"dot",size:10+Math.min(30,act(n)*2),color:{background:COL[n.type]||"#bbb",border:n.in?"#0000":"#c42b2b"},
   borderWidth:n.in?0:2,font:{color:getComputedStyle(document.body).color,size:12},title:n.type+": "+n.label})));
-const edges=new vis.DataSet(D.edges.map((e,i)=>({id:i,from:e.from,to:e.to,width:Math.min(8,1+e.c),
-  color:{color:e.nof?"#c42b2b":(ECOL[e.rel]||"#2fb67c"),opacity:.85},dashes:e.nof?[8,5]:(/Queried|Stopped|Noted/.test(e.rel)?[2,4]:false),
-  title:e.rel+(e.nof?" — NOT ON FILE":"")+(e.c>1?" ×"+e.c:"")})));
+const edges=new vis.DataSet(D.edges.map((e,i)=>({id:i,from:e.from,to:e.to,
+  width:SCOL[e.st]==="#b8bfc8"?1:Math.min(8,1+e.c),label:flag(e).trim()||undefined,
+  color:{color:ecol(e),opacity:.85},dashes:(e.open||SCOL[e.st])?[8,5]:(/Queried|Stopped|Noted/.test(e.rel)?[2,4]:false),
+  title:e.rel+(e.st?" — "+e.st:"")+(e.c>1?" ×"+e.c:"")})));
 const view=new vis.DataView(nodes,{filter:n=>{const d=byId[n.id];if(!show[d.type])return false;
-  if(document.getElementById("onlynof").checked){return D.edges.some(e=>e.nof&&(e.from===n.id||e.to===n.id));}return true;}});
+  if(document.getElementById("onlynof").checked){return D.edges.some(e=>e.open&&(e.from===n.id||e.to===n.id));}return true;}});
 const net=new vis.Network(document.getElementById("net"),{nodes:view,edges:edges},
   {physics:{solver:"forceAtlas2Based",stabilization:{iterations:300}},interaction:{hover:true,multiselect:false}});
 document.getElementById("types").addEventListener("change",e=>{show[e.target.dataset.t]=e.target.checked;view.refresh();});
@@ -710,7 +965,7 @@ function side(id){const n=byId[id];if(!n)return;
   let h='<h2>'+esc(n.label)+'</h2><div class="k">'+esc(n.type)+(n.lic?' · '+esc(n.lic):'')+(n.co?' · '+esc(n.co):'')+(n.in?'':' · <span class="nof">not in current data</span>')+'</div>'+
     '<div class="k">'+n.n+' notes · '+n.s+' stops · '+n.q+' queries</div>';
   h+='<div class="sec">Links ('+ls.length+')</div>'+ls.map(([e,i])=>{const o=byId[e.from===id?e.to:e.from];
-    return '<div class="it"><a onclick="pick(\''+esc(o.id).replace(/'/g,"\\'")+'\')">'+esc(o.label)+'</a> <span class="k">'+esc(e.rel)+(e.c>1?' ×'+e.c:'')+'</span>'+(e.nof?' <span class="nof">NOT ON FILE</span>':'')+
+    return '<div class="it"><a onclick="pick(\''+esc(o.id).replace(/'/g,"\\'")+'\')">'+esc(o.label)+'</a> <span class="k">'+esc(e.rel)+(e.c>1?' ×'+e.c:'')+'</span>'+(e.st?' <span class="'+(e.open?'nof':'k')+'">'+esc(e.st)+flag(e)+'</span>':'')+(e.cm?'<span class="k">Your comment: '+esc(e.cm)+'</span>':'')+
       e.ev.map(v=>'<span class="k">'+esc(v[0])+' · '+esc(v[1])+' · '+esc(v[2])+(v[3]?' — '+esc(v[3]):'')+'</span>').join("")+'</div>';}).join("");
   if(n.notes.length)h+='<div class="sec">Notes</div>'+n.notes.map(x=>'<div class="it"><span class="k">'+esc(x.w)+' · '+esc(x.o)+'</span>'+esc(x.b)+'</div>').join("");
   if(n.ev.length)h+='<div class="sec">Activity</div>'+n.ev.map(x=>'<div class="it"><b>'+esc(x[0])+'</b> '+esc(x[1])+' · '+esc(x[2])+'</div>').join("");
@@ -745,19 +1000,26 @@ def main():
     if not os.path.exists(a.data):
         sys.exit("No " + a.data + " -- run the app build first.")
     model = Model(json.load(open(a.data, encoding="utf-8")))
-    events, notes, links, dv, officers = analyse(model, snap)
+    events, notes, links, pairs, officers = analyse(model, snap)
     act, ring = active_set(model, links)
     meta = {"pulled": fmt_when(parse_ts(snap.get("pulled_at"))), "by": s_(snap.get("by")),
             "n_notes": len(snap.get("notes", [])), "n_stops": len(snap.get("checks", [])), "n_queries": len(snap.get("queries", []))}
     xl = os.path.join(a.out, "PVH_Intel.xlsx")
+    n_edits = apply_reviews(pairs, a.out, xl)
+    if n_edits:
+        print("Decisions read from the workbook: %d (saved to %s)" % (n_edits, REVIEW_FILE))
     try:
-        write_xlsx(xl, model, events, notes, links, dv, officers, act, meta)
+        write_xlsx(xl, model, events, notes, links, pairs, officers, act, meta)
     except PermissionError:
         sys.exit("PVH_Intel.xlsx is open in Excel -- close it and run again.")
-    write_gephi(a.out, model, links, ring)
-    write_map(os.path.join(a.out, "PVH_Intel_Map.html"), model, links, notes, ring, meta)
-    nof = sum(1 for _, _, L in dv if not L["on_file"])
-    print("Records with activity: %d | links: %d | driver-vehicle: %d (%d NOT ON FILE)" % (len(act), len(links), len(dv), nof))
+    write_gephi(a.out, model, links, ring, pairs)
+    write_map(os.path.join(a.out, "PVH_Intel_Map.html"), model, links, notes, ring, pairs, meta)
+    st = Counter(P["status"] for P in pairs.values())
+    print("Records with activity: %d | links: %d | driver-vehicle: %d" % (len(act), len(links), len(pairs)))
+    print("  open leads: %d  (NOT ON FILE %d, follow up %d, reopened %d)" % (
+        sum(st[k] for k in OPEN), st["NOT ON FILE"], st["Follow up"], st["Reopened"]))
+    print("  company driver: %d | reviewed: %d | on file: %d" % (
+        st["Company driver"], st["Authorized driver"] + st["False link"], st["On file"]))
     print("Written to " + a.out)
 
 
