@@ -1,10 +1,11 @@
 """
 PVH intel export -- notes, stops and queries from the shared Supabase project,
-joined to the PVH records and turned into links between drivers and vehicles.
+joined to the PVH records: who drives what, and who is associated with whom.
 
 Usage:
-    python pvh_intel.py                 sign in, pull, build everything
+    python pvh_intel.py                 sign in, pull, build everything, open the map
     python pvh_intel.py --offline       rebuild from the last pull (intel/snapshot.json)
+    python pvh_intel.py --no-map        build the files only
     python pvh_intel.py --snapshot F --out DIR   (testing: any snapshot, any folder)
 
 Signs in as you (the email is remembered in pvh_local_config.json as
@@ -12,12 +13,19 @@ Signs in as you (the email is remembered in pvh_local_config.json as
 what the app itself can read, with the same public key the app uses.
 
 Writes to intel/ (gitignored -- it is personal information):
-    PVH_Intel.xlsx      Profiles, Driver-Vehicle, Links, Notes, Activity,
-                        Monthly, Officers, Hour x Weekday
-    PVH_Intel_Map.html  clickable relationship map (opens in a browser)
+    PVH_Intel.xlsx      Who drives what, People, Driver-Vehicle, Associations,
+                        Profiles, Links, Notes, Activity, Monthly, Officers,
+                        Hour x Weekday
+    PVH_Intel_Map.html  the relationship map, view only
+    link_reviews.csv    your links and decisions -- kept across every rebuild
     gephi_nodes.csv / gephi_edges.csv   Gephi "Import spreadsheet" format
     PVH_Intel.graphml   Gephi, Cytoscape, yEd, Neo4j
     snapshot.json       the raw pull, for --offline reruns
+
+Then the map opens in the browser from a small server on this PC only
+(127.0.0.1), where links can be made and removed: a person drives a vehicle,
+or two people are associated. Each change is saved to link_reviews.csv and
+every file above is rebuilt. Close the window to stop it.
 
 How links are found:
     On file        owner -> vehicle, from the PVH records
@@ -27,8 +35,10 @@ How links are found:
                    minutes, with a Stop or Note on one of them, and no more
                    than 2 vehicles / 2 people in that span (desk lookups are
                    not encounters)
-A driver-vehicle pair is On file, Company driver (same company) or NOT ON FILE;
-decisions typed on the Driver-Vehicle sheet are kept in intel/link_reviews.csv.
+    My link        made by you in the map
+A driver-vehicle pair is On file, Company driver (same company) or NOT ON FILE
+until you Confirm, Follow up or Remove it; two people named together in a note
+are Seen together.
 """
 
 import os
@@ -236,13 +246,20 @@ class Model:
         for v in self.V:
             k = key_veh(v)
             deck = s_(v.get("Deck No"))
-            lab = " · ".join(x for x in (("Deck " + deck) if deck else "", s_(v.get("Plate No")),
-                                         (s_(v.get("Make Model")) + " " + s_(v.get("Vehicle Color"))).strip()) if x)
-            self.add(k, "Vehicle", lab or k, licence=s_(v.get("Licence No")), plate=s_(v.get("Plate No")), deck=deck,
-                     company=s_(v.get("Business Name")), detail=s_(v.get("Vehicle Type")))
             ow = v.get("_owner")
-            if ow is not None and ow < len(self.W):
-                self.veh_owner[k] = self.resolve(key_owner(self.W[ow]))
+            owner = self.resolve(key_owner(self.W[ow])) if ow is not None and ow < len(self.W) else None
+            if owner:
+                self.veh_owner[k] = owner
+            owner_name = self.nodes[owner]["label"] if owner in self.nodes else \
+                (" ".join(x for x in (s_(v.get("Owner First Name")), s_(v.get("Owner Last Name"))) if x)
+                 or s_(v.get("Business Name")))
+            desc = (s_(v.get("Make Model")) + " " + s_(v.get("Vehicle Color"))).strip()
+            # Deck, owner, plate, description -- the order a car is read in the field.
+            lab = " · ".join(x for x in (("Deck " + deck) if deck else "No deck", owner_name,
+                                         s_(v.get("Plate No")), desc) if x)
+            self.add(k, "Vehicle", lab, licence=s_(v.get("Licence No")), plate=s_(v.get("Plate No")), deck=deck,
+                     company=s_(v.get("Business Name")), detail=s_(v.get("Vehicle Type")),
+                     owner_name=owner_name, desc=desc)
         self.build_patterns()
 
     def add(self, nid, typ, label, **kw):
@@ -346,6 +363,39 @@ class Model:
 
 
 # ------------------------------------------------------------------ analysis
+PERSON = ("Operator", "Owner-operator", "Owner")
+
+
+def pair_id(a, b):
+    """Person | vehicle for a drives pair; the two people in id order otherwise."""
+    if b["type"] == "Vehicle":
+        return a["id"] + " | " + b["id"]
+    if a["type"] == "Vehicle":
+        return b["id"] + " | " + a["id"]
+    x, y = sorted((a["id"], b["id"]))
+    return x + " | " + y
+
+
+def new_pair(model, a, b):
+    """A drives pair (a person and a vehicle) or an assoc pair (two people)."""
+    p = {"id": pair_id(a, b), "links": [], "evidence": [], "review": None, "added": False, "reopened_by": []}
+    if "Vehicle" in (a["type"], b["type"]):
+        veh, per = (a, b) if a["type"] == "Vehicle" else (b, a)
+        owner = model.veh_owner.get(veh["id"])
+        if owner == per["id"]:
+            base = "On file"
+        elif co_match(per["company"], veh["company"]) or \
+                (owner in model.nodes and co_match(per["company"], model.nodes[owner]["company"])):
+            base = "Company driver"
+        else:
+            base = "NOT ON FILE"
+        p.update(kind="drives", per=per, b=veh, veh=veh, owner=owner, base=base, status=base)
+    else:
+        x, y = sorted((a, b), key=lambda n: n["id"])
+        p.update(kind="assoc", per=x, b=y, veh=None, owner=None, base="Seen together", status="Seen together")
+    return p
+
+
 def analyse(model, snap):
     events, notes, links = [], [], {}
     officers = {}
@@ -442,57 +492,60 @@ def analyse(model, snap):
     for e in events:
         model.nodes[e["node"]]["events"].append(e)
 
-    # driver <-> vehicle pairs: one per person and vehicle, however many ways
-    # they were linked, with the on-file / company check
+    # Pairs: one per person and vehicle ("drives"), and one per two people
+    # ("assoc"), however many ways they were linked. A drives pair gets the
+    # on-file / company check.
     pairs = {}
     for L in links.values():
         a, b = model.nodes[L["source"]], model.nodes[L["target"]]
-        if (a["type"] == "Vehicle") == (b["type"] == "Vehicle"):
+        if a["type"] in PERSON and b["type"] in PERSON:
+            P = pairs.get(pair_id(a, b)) or new_pair(model, a, b)
+        elif {a["type"], b["type"]} & {"Vehicle"} and (a["type"] in PERSON or b["type"] in PERSON):
+            P = pairs.get(pair_id(a, b)) or new_pair(model, a, b)
+        else:
             continue
-        veh, per = (a, b) if a["type"] == "Vehicle" else (b, a)
-        pid = per["id"] + " | " + veh["id"]
-        P = pairs.get(pid)
-        if not P:
-            owner = model.veh_owner.get(veh["id"])
-            if owner == per["id"]:
-                base = "On file"
-            elif co_match(per["company"], veh["company"]) or \
-                    (owner in model.nodes and co_match(per["company"], model.nodes[owner]["company"])):
-                base = "Company driver"
-            else:
-                base = "NOT ON FILE"
-            P = pairs[pid] = {"id": pid, "veh": veh, "per": per, "owner": owner, "base": base, "links": [],
-                              "status": base, "review": None}
+        pairs[P["id"]] = P
         P["links"].append(L)
-        L["pair"] = pid
+        L["pair"] = P["id"]
     for P in pairs.values():
         P["evidence"] = sorted((dict(ev, relation=L["relation"]) for L in P["links"] for ev in L["evidence"]),
                                key=lambda e: e.get("when") or datetime.datetime.min.replace(tzinfo=TZ))
     return events, notes, links, pairs, officers
 
 
-# ------------------------------------------------------------------ reviews
-# Decisions on driver-vehicle links, kept in intel/link_reviews.csv so they
-# survive every rebuild. They are typed into the Decision / Comment columns of
-# the Driver-Vehicle sheet; the next run reads them back before overwriting
-# the workbook. A hidden "_was" column holds what each row was written with,
-# so only cells actually changed in Excel count as edits -- the CSV can also be
-# edited directly.
+# ------------------------------------------------------------------ your links and decisions
+# Everything you decide is kept in intel/link_reviews.csv, one row per pair, so
+# it survives every rebuild:
+#   * a decision on a pair the evidence found -- Confirmed, Follow up, Removed;
+#   * a link you made yourself (added = yes) -- a person drives a vehicle, or
+#     two people are associated -- which needs no evidence at all.
+# Decisions come from the map (links are made and removed there) or from the
+# Decision / Comment columns of the Driver-Vehicle and Associations sheets; a
+# hidden "_was" column holds what each row was written with, so only cells
+# actually changed in Excel count as edits. The CSV can be edited directly too.
+#
+# Pairs are keyed by the same record keys the phone app's shared notes use
+# (v:..., o:..., w:...), so this file can later be shared or loaded into the
+# shared database as it is.
 REVIEW_FILE = "link_reviews.csv"
-REVIEW_COLS = ["link_id", "driver", "vehicle", "decision", "comment", "reviewed", "ev_last", "ev_officers"]
-DECISIONS = ["Authorized driver", "False link", "Follow up"]
+REVIEW_COLS = ["link_id", "kind", "person", "other", "added", "decision", "comment", "reviewed",
+               "ev_last", "ev_officers"]
+DECISIONS = ["Confirmed", "Follow up", "Removed"]
 OPEN = {"NOT ON FILE", "Follow up", "Reopened"}
+YOURS = {"Confirmed", "My link"}
 SEP = " || "
 
 
 def norm_decision(s):
+    """Today's words, and the ones the first version used (Authorized driver,
+    False link), so earlier decisions carry over."""
     t = s_(s).strip().lower()
     if not t:
         return ""
-    if t.startswith("auth"):
-        return "Authorized driver"
-    if t.startswith("false") or t.startswith("not"):
-        return "False link"
+    if t.startswith(("auth", "conf", "ok", "yes")):
+        return "Confirmed"
+    if t.startswith(("false", "not", "rem", "wrong", "no", "del")):
+        return "Removed"
     return "Follow up"
 
 
@@ -502,8 +555,20 @@ def load_reviews(dir_):
     if not os.path.exists(p):
         return {}
     with open(p, newline="", encoding="utf-8-sig") as f:
-        rows = [{k: csv_uncell(v) for k, v in r.items()} for r in csv.DictReader(f)]
-        return {r["link_id"]: r for r in rows if r.get("link_id")}
+        rows = [{k: csv_uncell(v) for k, v in r.items() if k} for r in csv.DictReader(f)]
+    out = {}
+    for r in rows:
+        lid = s_(r.get("link_id")).strip()
+        if not lid:
+            continue
+        r["link_id"] = lid
+        r["person"] = s_(r.get("person") or r.get("driver"))
+        r["other"] = s_(r.get("other") or r.get("vehicle"))
+        r["kind"] = s_(r.get("kind")) or ("drives" if " | v:" in lid else "assoc")
+        r["added"] = "yes" if s_(r.get("added")).strip().lower() in ("yes", "y", "true", "1") else ""
+        r["decision"] = norm_decision(r.get("decision"))
+        out[lid] = r
+    return out
 
 
 def save_reviews(dir_, reviews):
@@ -529,76 +594,170 @@ def harvest_edits(xlsx_path):
     except Exception as exc:   # a damaged or foreign file must not stop the run
         print("  could not read decisions from " + os.path.basename(xlsx_path) + ": " + str(exc))
         return {}
-    if "Driver-Vehicle" not in wb.sheetnames:
-        return {}
-    rows = wb["Driver-Vehicle"].iter_rows(values_only=True)
-    head = [s_(h) for h in next(rows, [])]
-    try:
-        ci, cd, cc, cw = (head.index(x) for x in ("Link ID", "Decision", "Comment", "_was"))
-    except ValueError:
-        return {}
     out = {}
-    for r in rows:
-        lid = s_(r[ci]).strip() if ci < len(r) else ""
-        if not lid:
+    for name in ("Driver-Vehicle", "Associations"):
+        if name not in wb.sheetnames:
             continue
-        dec, com = norm_decision(r[cd]), s_(r[cc]).strip()
-        if dec + SEP + com != s_(r[cw]):
-            out[lid] = (dec, com)
+        rows = wb[name].iter_rows(values_only=True)
+        head = [s_(h) for h in next(rows, [])]
+        try:
+            ci, cd, cc, cw = (head.index(x) for x in ("Link ID", "Decision", "Comment", "_was"))
+        except ValueError:
+            continue
+        for r in rows:
+            lid = s_(r[ci]).strip() if ci < len(r) else ""
+            if not lid:
+                continue
+            dec, com = norm_decision(r[cd]), s_(r[cc]).strip()
+            # The row was written with "_was"; a workbook from an earlier version
+            # says "Authorized driver" where this one says "Confirmed", so compare
+            # in today's words.
+            was_dec, _, was_com = s_(r[cw]).partition(SEP)
+            if (dec, com) != (norm_decision(was_dec), was_com.strip()):
+                out[lid] = (dec, com)
     wb.close()
     return out
 
 
-def apply_reviews(pairs, out_dir, xlsx_path):
+def baseline(r, P):
+    """What the evidence looked like when the decision was made -- so later
+    evidence the decision did not see can reopen it."""
+    ev = [e for e in P["evidence"] if e.get("when")]
+    r["ev_last"] = max(e["when"] for e in ev).isoformat() if ev else ""
+    r["ev_officers"] = ";".join(sorted({e.get("officer", "") for e in P["evidence"]}))
+
+
+def today_str():
+    return datetime.datetime.now(TZ).strftime("%m/%d/%y")
+
+
+def apply_links(model, links, pairs, out_dir, xlsx_path):
+    """Fold your decisions and your own links into the pairs. Returns how many
+    workbook edits were read."""
     reviews = load_reviews(out_dir)
     edits = harvest_edits(xlsx_path)
-    today = datetime.datetime.now(TZ).strftime("%m/%d/%y")
-
-    def baseline(r, P):
-        ev = [e for e in P["evidence"] if e.get("when")]
-        r["ev_last"] = max(e["when"] for e in ev).isoformat() if ev else ""
-        r["ev_officers"] = ";".join(sorted({e.get("officer", "") for e in P["evidence"]}))
-
+    today = today_str()
     changed = 0
-    for lid, (dec, com) in edits.items():
+    for lid, (dec, com) in list(edits.items()):
+        r = reviews.get(lid) or {"link_id": lid, "added": ""}
+        if (dec, com) == (norm_decision(r.get("decision")), s_(r.get("comment")).strip()):
+            del edits[lid]     # already on file -- not a new review
+            continue
         changed += 1
-        if not dec and not com:
+        if not dec and not com and not r.get("added"):
             reviews.pop(lid, None)
             continue
-        P = pairs.get(lid)
-        r = reviews.get(lid) or {"link_id": lid}
         r.update({"decision": dec, "comment": com, "reviewed": today})
+        P = pairs.get(lid)
         if P:
-            r["driver"], r["vehicle"] = P["per"]["label"], P["veh"]["label"]
+            r.update(kind=P["kind"], person=P["per"]["label"], other=P["b"]["label"])
             baseline(r, P)
         reviews[lid] = r
     # A decision typed straight into the CSV has no baseline yet; take it now.
     for lid, r in reviews.items():
-        if lid in pairs and not r.get("ev_last") and not r.get("ev_officers"):
+        if lid in pairs and r.get("decision") and not r.get("ev_last") and not r.get("ev_officers"):
             baseline(r, pairs[lid])
             changed += 1
     if changed:
         save_reviews(out_dir, reviews)
-    # Accepted links come back when new evidence arrives that the review did
-    # not see: a sighting by a different officer, or a new note naming them.
+
+    # Your own links: a pair with no evidence needed, drawn as "My link".
+    for lid, r in reviews.items():
+        if not r.get("added"):
+            continue
+        a_id, _, b_id = lid.partition(" | ")
+        if not a_id or not b_id:
+            continue
+        a = model.node_for(a_id, r.get("person"))
+        b = model.node_for(b_id, r.get("other"))
+        if not ((a["type"] in PERSON and b["type"] in PERSON) or
+                (a["type"] in PERSON and b["type"] == "Vehicle")):
+            continue
+        P = pairs.get(lid)
+        if not P:
+            P = pairs[lid] = new_pair(model, a, b)
+        P["added"] = True
+        if norm_decision(r.get("decision")) != "Removed":
+            when = None
+            try:
+                when = datetime.datetime.strptime(s_(r.get("reviewed")), "%m/%d/%y").replace(tzinfo=TZ)
+            except ValueError:
+                pass
+            src, dst = sorted((a["id"], b["id"]))
+            links[(src, dst, "My link")] = {
+                "source": src, "target": dst, "relation": "My link", "count": 1, "first": when, "last": when,
+                "officers": Counter(), "pair": lid,
+                "evidence": [{"officer": "(you)", "when": when, "how": "Linked by you",
+                              "text": s_(r.get("comment")), "confidence": "yours"}]}
+
+    # Status: your decision first, then your own link, then what the evidence says.
+    # A Confirmed or Removed pair comes back as Reopened when evidence arrives
+    # that the decision did not see: another officer, or a new note naming them.
     for lid, P in pairs.items():
         r = reviews.get(lid)
-        if not r:
-            continue
         P["review"] = r
-        dec = norm_decision(r.get("decision"))
-        if not dec:
-            continue
+        dec = norm_decision(r.get("decision")) if r else ""
         if dec == "Follow up":
             P["status"] = "Follow up"
-            continue
-        last = parse_ts(r.get("ev_last"))
-        seen = set(s_(r.get("ev_officers")).split(";"))
-        fresh = [e for e in P["evidence"] if last and e.get("when") and e["when"] > last
-                 and (e.get("officer") not in seen or e.get("relation") == "Note mention")]
-        P["status"] = "Reopened" if fresh else dec
-        P["reopened_by"] = fresh
+        elif dec in ("Confirmed", "Removed"):
+            last = parse_ts(r.get("ev_last"))
+            seen = set(s_(r.get("ev_officers")).split(";"))
+            fresh = [e for e in P["evidence"] if last and e.get("when") and e["when"] > last
+                     and (e.get("officer") not in seen or e.get("relation") == "Note mention")]
+            P["status"] = "Reopened" if fresh else dec
+            P["reopened_by"] = fresh
+        elif P["added"]:
+            P["status"] = "My link"
+        else:
+            P["status"] = P["base"]
     return len(edits)
+
+
+def apply_edit(op, state):
+    """One change made in the map. Returns (error message or None, id of the pair changed)."""
+    N = state["model"].nodes
+    pairs = state["pairs"]
+    reviews = load_reviews(state["out"])
+    today = today_str()
+    comment = s_(op.get("comment")).strip()[:500]
+    what = op.get("op")
+    if what == "add":
+        a, b = s_(op.get("a")), s_(op.get("b"))
+        if a not in N or b not in N or a == b:
+            return "That record is not in the current data.", None
+        ta, tb = N[a]["type"], N[b]["type"]
+        if not ((ta in PERSON and tb in PERSON) or (ta in PERSON and tb == "Vehicle") or
+                (tb in PERSON and ta == "Vehicle")):
+            return "A link joins a person to a vehicle (drives), or two people (associated).", None
+        P = pairs.get(pair_id(N[a], N[b])) or new_pair(state["model"], N[a], N[b])
+        r = reviews.get(P["id"]) or {"link_id": P["id"]}
+        r.update(kind=P["kind"], person=P["per"]["label"], other=P["b"]["label"], added="yes", reviewed=today)
+        if norm_decision(r.get("decision")) == "Removed":
+            r["decision"] = ""
+        if comment:
+            r["comment"] = comment
+        reviews[P["id"]] = r
+        focus = P["id"]
+    elif what == "decide":
+        lid = s_(op.get("id"))
+        dec = norm_decision(op.get("decision"))
+        P = pairs.get(lid)
+        if not P and lid not in reviews:
+            return "That link is no longer in the data.", None
+        r = reviews.get(lid) or {"link_id": lid, "added": ""}
+        if P:
+            r.update(kind=P["kind"], person=P["per"]["label"], other=P["b"]["label"])
+            baseline(r, P)
+        r.update(decision=dec, comment=comment, reviewed=today)
+        if not dec and not r.get("added") and not comment:
+            reviews.pop(lid, None)
+        else:
+            reviews[lid] = r
+        focus = lid
+    else:
+        return "Unknown change.", None
+    save_reviews(state["out"], reviews)
+    return None, focus
 
 
 def active_set(model, links):
@@ -659,48 +818,135 @@ def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
         ["Pulled", meta["pulled"]], ["Pulled by", meta["by"]], ["PVH data built", model.built],
         ["Notes / stops / queries", "%d / %d / %d" % (meta["n_notes"], meta["n_stops"], meta["n_queries"])], [],
         ["Sheets"],
+        ["Who drives what", "Every vehicle in deck order: owner, drivers you have confirmed or linked, and drivers seen with it that still need a look."],
+        ["People", "Everyone linked to a vehicle or another person: what they own, what they drive, who they drive for, who drives for them, who they are associated with."],
+        ["Driver-Vehicle", "One row per person and vehicle linked by notes, an encounter or by you. Review them here or in the map."],
+        ["Associations", "One row per two people linked by a note or by you."],
         ["Profiles", "Every record with activity: counts, last activity, who, and what it links to."],
-        ["Driver-Vehicle", "One row per driver and vehicle linked by notes or the same encounter. Review them here (below)."],
         ["Links", "Every link with its evidence."],
         ["Notes", "All notes, with the records each one mentions."],
         ["Activity", "One row per query / stop / note -- use for pivots."],
         ["Monthly", "Activity per record per month."],
         ["Officers", "Activity per officer."],
         ["Hour x Weekday", "When activity happens."], [],
-        ["Link types"],
+        ["Vehicles read", "Deck · owner · plate · description."], [],
+        ["How links are found"],
         ["On file", "Owner -> vehicle in the PVH records."],
         ["Note mention", "A note on one record names another (plate, licence no., deck, full name)."],
         ["Same encounter", "One officer touched a vehicle and a person within 15 minutes, with a Stop or Note on one of them. Spans with more than 2 vehicles or 2 people (desk lookups) are ignored."],
+        ["My link", "A link you made yourself in the map."],
         ["Confidence", "exact = one match; likely = deck number or encounter; possible = several records share that name or number -- verify."], [],
-        ["Driver-Vehicle status"],
+        ["Status"],
         ["On file", "The person is the vehicle's registered owner."],
         ["Company driver", "Not the owner, but the person and the vehicle are with the same company. Usually routine."],
         ["NOT ON FILE", "No registration or company connection. An open lead until reviewed."],
-        ["Authorized driver", "You reviewed it and it is fine. Greyed out."],
-        ["False link", "You reviewed it and the link is wrong (e.g. the note was about something else). Greyed out."],
-        ["Follow up", "You reviewed it and want to keep an eye on it. Stays open."],
-        ["Reopened", "You accepted it, but new evidence has come in since: another officer, or a new note. Look again."], [],
-        ["Reviewing a link"],
-        ["1", "On Driver-Vehicle, pick a Decision from the drop-down (yellow column) and add a Comment if useful."],
-        ["2", "Save and close this workbook."],
-        ["3", "Run Build_PVH_Intel.bat again (or python pvh_intel.py --offline). Decisions are saved to link_reviews.csv."],
-        ["", "To undo a decision, clear its Decision and Comment cells and run again."], [],
+        ["Seen together", "Two people linked by a note. Not reviewed yet."],
+        ["My link", "You linked them yourself."],
+        ["Confirmed", "You reviewed it and it is right."],
+        ["Follow up", "You want to keep an eye on it. Stays open."],
+        ["Removed", "You took the link away. It stays on file, greyed out here and hidden in the map."],
+        ["Reopened", "You confirmed or removed it, but new evidence has come in since: another officer, or a new note. Look again."], [],
+        ["Making and reviewing links"],
+        ["In the map", "Run Build_PVH_Intel.bat: the map opens in your browser. Click a record, then 'Link to…' and the other record. Click a line to Confirm, Follow up, Remove or Restore it. Changes are saved at once."],
+        ["In this workbook", "On Driver-Vehicle or Associations, pick a Decision (yellow column), add a Comment, save, close and run Build_PVH_Intel.bat again."],
+        ["", "Everything you decide is kept in link_reviews.csv and survives every rebuild."], [],
         ["This file holds personal information. Keep it on this PC; do not email or share it."],
     ]:
         ws.append(line)
     ws["A1"].font = Font(bold=True, size=14)
     ws.column_dimensions["A"].width = 24
-    ws.column_dimensions["B"].width = 100
+    ws.column_dimensions["B"].width = 110
 
     now = datetime.datetime.now(TZ)
+    green = PatternFill("solid", fgColor="E2F4E8")
+    SEEN = {"NOT ON FILE", "Company driver", "Reopened", "Follow up", "Seen together"}
+
+    def lic(n):
+        return n["label"] + (" (" + n["licence"] + ")" if n["type"] != "Vehicle" and n["licence"] else "")
+
+    def short(v):
+        return " · ".join(x for x in (("Deck " + v["deck"]) if v["deck"] else "", v["plate"]) if x) or v["label"]
+
+    def last_seen(nid):
+        ws_ = [e["when"] for e in N[nid]["events"] if e["when"]]
+        return fmt_when(max(ws_)) if ws_ else ""
+
+    live = [P for P in pairs.values() if P["status"] != "Removed"]
+    by_veh, by_per = defaultdict(list), defaultdict(list)
+    for P in live:
+        by_per[P["per"]["id"]].append(P)
+        (by_veh if P["kind"] == "drives" else by_per)[P["b"]["id"]].append(P)
+    owns = defaultdict(list)
+    for vid, oid in model.veh_owner.items():
+        owns[oid].append(N[vid])
+
+    # --- Who drives what: every vehicle, in deck order
+    def deck_key(n):
+        d = s_(n["deck"])
+        return (0, int(d), n["plate"]) if d.isdigit() else (1, 0, n["plate"] or n["label"])
+    rows = []
+    for v in sorted((n for n in N.values() if n["type"] == "Vehicle" and n["in_data"]), key=deck_key):
+        ps = [P for P in by_veh.get(v["id"], []) if P["status"] != "On file"]
+        on = N.get(model.veh_owner.get(v["id"]))
+        drivers = "; ".join(sorted({lic(P["per"]) for P in ps if P["status"] in YOURS}))
+        seen = "; ".join(sorted({lic(P["per"]) + " [" + P["status"] + "]" for P in ps if P["status"] in SEEN}))
+        rows.append([v["deck"], v.get("owner_name", ""), on["licence"] if on and on["type"] == "Owner-operator" else "",
+                     v["plate"], v.get("desc", ""), v["detail"], drivers, seen, last_seen(v["id"]), v["id"]])
+    ws = sheet("Who drives what", ["Deck", "Owner", "Owner-operator licence", "Plate", "Vehicle", "Type",
+                                   "Drivers (confirmed / your links)", "Seen with -- to review", "Last activity", "Key"],
+               rows, {"Owner": 30, "Owner-operator licence": 14, "Vehicle": 30, "Drivers (confirmed / your links)": 44,
+                      "Seen with -- to review": 50, "Last activity": 18, "Key": 16},
+               wrap_cols=("Drivers (confirmed / your links)", "Seen with -- to review"))
+    for row in ws.iter_rows(min_row=2):
+        f = red if row[7].value else green if row[6].value else None
+        if f:
+            for c in row:
+                c.fill = f
+
+    # --- People: who owns, drives and is associated with what and whom
+    people = set()
+    for P in live:
+        if P["kind"] == "assoc":
+            people |= {P["per"]["id"], P["b"]["id"]}
+        elif P["status"] != "On file":
+            people.add(P["per"]["id"])
+            if P["owner"] in N:
+                people.add(P["owner"])
+    rows = []
+    for pid in sorted(people, key=lambda k: N[k]["label"]):
+        n = N[pid]
+        mine = by_per.get(pid, [])
+        drives = [P for P in mine if P["kind"] == "drives" and P["per"]["id"] == pid and P["status"] != "On file"]
+        drives_for = {N[P["owner"]]["label"] for P in drives if P["status"] in YOURS and P["owner"] in N and P["owner"] != pid}
+        their = {lic(P["per"]) for v in owns.get(pid, []) for P in by_veh.get(v["id"], [])
+                 if P["status"] in YOURS and P["per"]["id"] != pid}
+        assoc = []
+        for P in mine:
+            if P["kind"] != "assoc":
+                continue
+            o = P["b"] if P["per"]["id"] == pid else P["per"]
+            assoc.append(lic(o) + ("" if P["status"] in YOURS else " [" + P["status"] + "]"))
+        rows.append([n["label"], n["type"], n["licence"], n["company"],
+                     "; ".join(short(v) for v in owns.get(pid, [])),
+                     "; ".join(sorted(short(P["b"]) for P in drives if P["status"] in YOURS)),
+                     "; ".join(sorted(short(P["b"]) + " [" + P["status"] + "]" for P in drives if P["status"] in SEEN)),
+                     "; ".join(sorted(drives_for)), "; ".join(sorted(their)), "; ".join(sorted(assoc)), pid])
+    sheet("People", ["Person", "Type", "Licence", "Company", "Owns", "Drives (confirmed / your links)",
+                     "Seen driving -- to review", "Drives for", "Their drivers", "Associated with", "Key"],
+          rows, {"Person": 28, "Company": 24, "Owns": 30, "Drives (confirmed / your links)": 34,
+                 "Seen driving -- to review": 40, "Drives for": 30, "Their drivers": 34, "Associated with": 40, "Key": 22},
+          wrap_cols=("Owns", "Drives (confirmed / your links)", "Seen driving -- to review", "Drives for",
+                     "Their drivers", "Associated with"))
+
+    # --- Profiles
     adj = defaultdict(set)
     for L in links.values():
         adj[L["source"]].add(L["target"])
         adj[L["target"]].add(L["source"])
     nof = Counter()
     for P in pairs.values():
-        if P["status"] in OPEN:
-            nof[P["veh"]["id"]] += 1
+        if P["kind"] == "drives" and P["status"] in OPEN:
+            nof[P["b"]["id"]] += 1
             nof[P["per"]["id"]] += 1
     prof = []
     for nid in sorted(act, key=lambda k: -(N[k]["notes"] + N[k]["stops"] + N[k]["queries"])):
@@ -710,7 +956,7 @@ def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
         hrs = Counter(e["when"].hour for e in evs)
         prof.append([n["type"], n["label"], n["licence"] or n["plate"], n["company"], n["notes"], n["stops"], n["queries"],
                      sum(1 for e in evs if (now - e["when"]).days < 30),
-                     fmt_when(last["when"]) if last else "", (last["kind"] + " \u00B7 " + last["officer"]) if last else "",
+                     fmt_when(last["when"]) if last else "", (last["kind"] + " · " + last["officer"]) if last else "",
                      len(n["officers"]), ", ".join(o for o, _ in n["officers"].most_common(3)),
                      ("%02d00-%02d59" % (hrs.most_common(1)[0][0], hrs.most_common(1)[0][0])) if hrs else "",
                      nof[nid] or "", "; ".join(sorted(lab(x) for x in adj[nid]))[:500],
@@ -720,14 +966,14 @@ def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
                        "Linked to", "Flag", "Key"], prof,
           {"Record": 34, "Company": 24, "Linked to": 60, "Last activity": 18, "Last by": 22, "Top officers": 30, "Key": 22})
 
-    order = {"Reopened": 0, "Follow up": 1, "NOT ON FILE": 2, "Company driver": 3,
-             "Authorized driver": 4, "False link": 5, "On file": 6}
+    # --- Driver-Vehicle and Associations: the pairs, with your decisions
+    order = {"Reopened": 0, "Follow up": 1, "NOT ON FILE": 2, "Seen together": 3, "Company driver": 4,
+             "My link": 5, "Confirmed": 6, "On file": 7, "Removed": 8}
     rank = lambda c: 0 if c == "exact" else (1 if c == "likely" else 2)
-    rows = []
-    for P in sorted(pairs.values(), key=lambda P: (order.get(P["status"], 9), -len(P["evidence"]))):
-        veh, per, r, ev = P["veh"], P["per"], P["review"] or {}, P["evidence"]
+
+    def pair_cells(P):
+        r, ev = P["review"] or {}, P["evidence"]
         dec, com = norm_decision(r.get("decision")), s_(r.get("comment"))
-        kinds = Counter(e["relation"] for e in ev)
         dated = [e["when"] for e in ev if e.get("when")]
         notes_ev = [e for e in ev if e["relation"] == "Note mention"]
         status = P["status"]
@@ -736,36 +982,65 @@ def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
             status += " (was " + dec + ") — new: " + \
                 "; ".join(sorted({e.get("officer", "") + " " + fmt_when(e.get("when")) for e in P["reopened_by"]}))
             dec = ""
-        rows.append([status, dec, com, s_(r.get("reviewed")), per["label"], per["licence"], per["company"],
+        kinds = Counter(e["relation"] for e in ev)
+        if P["added"]:
+            kinds["My link"] += 1
+        return dict(status=status, dec=dec, com=com, reviewed=s_(r.get("reviewed")),
+                    evidence=", ".join(k + (" ×" + str(c) if c > 1 else "") for k, c in kinds.items()),
+                    times=len(ev), first=fmt_when(min(dated)) if dated else "", last=fmt_when(max(dated)) if dated else "",
+                    officers=", ".join(sorted({e.get("officer", "") for e in ev})),
+                    conf=min((e.get("confidence", "") for e in ev), key=rank, default=""),
+                    how=ev[-1].get("how", "") if ev else ("Linked by you" if P["added"] else ""),
+                    note=(notes_ev[-1].get("text", "") if notes_ev else "")[:500])
+
+    def review_sheet(title, cols, rows, widths):
+        ws = sheet(title, cols, rows, widths, wrap_cols=("Latest note", "Comment"))
+        ws.column_dimensions[get_column_letter(len(cols))].hidden = True
+        for row in ws.iter_rows(min_row=2):
+            st = row[0].value or ""
+            f = red if (st in OPEN or st.startswith("Reopened")) else lilac if st == "Company driver" else \
+                green if st in YOURS else grey if st in ("On file", "Removed") else None
+            if f:
+                for c in row:
+                    c.fill = f
+            row[1].fill = row[2].fill = edit
+        if rows:
+            dv_ = DataValidation(type="list", formula1='"' + ",".join(DECISIONS) + '"', allow_blank=True,
+                                 showErrorMessage=False)
+            ws.add_data_validation(dv_)
+            dv_.add("B2:B" + str(len(rows) + 1))
+
+    rows = []
+    for P in sorted((P for P in pairs.values() if P["kind"] == "drives"),
+                    key=lambda P: (order.get(P["status"], 9), -len(P["evidence"]))):
+        c, veh, per = pair_cells(P), P["b"], P["per"]
+        rows.append([c["status"], c["dec"], c["com"], c["reviewed"], per["label"], per["licence"], per["company"],
                      veh["label"], veh["plate"], veh["deck"], veh["company"],
                      N[P["owner"]]["label"] if P["owner"] in N else "",
-                     ", ".join(k + (" ×" + str(n) if n > 1 else "") for k, n in kinds.items()), len(ev),
-                     fmt_when(min(dated)) if dated else "", fmt_when(max(dated)) if dated else "",
-                     ", ".join(sorted({e.get("officer", "") for e in ev})),
-                     min((e.get("confidence", "") for e in ev), key=rank, default=""),
-                     ev[-1].get("how", "") if ev else "", (notes_ev[-1].get("text", "") if notes_ev else "")[:500],
-                     P["id"], dec + SEP + com])
-    cols = ["Status", "Decision", "Comment", "Reviewed", "Driver / person", "Licence", "Driver company", "Vehicle", "Plate",
-            "Deck", "Vehicle company", "Registered owner", "Evidence", "Times", "First", "Last", "Officers", "Confidence",
-            "Latest how found", "Latest note", "Link ID", "_was"]
-    ws = sheet("Driver-Vehicle", cols, rows,
-               {"Status": 22, "Decision": 18, "Comment": 36, "Driver / person": 26, "Driver company": 24, "Vehicle": 34,
-                "Vehicle company": 24, "Registered owner": 24, "Evidence": 26, "First": 18, "Last": 18,
-                "Latest how found": 36, "Latest note": 60, "Link ID": 34}, wrap_cols=("Latest note", "Comment"))
-    ws.column_dimensions[get_column_letter(len(cols))].hidden = True
-    for row in ws.iter_rows(min_row=2):
-        st = row[0].value or ""
-        f = red if (st in OPEN or st.startswith("Reopened")) else lilac if st == "Company driver" else \
-            grey if st in ("Authorized driver", "False link", "On file") else None
-        if f:
-            for c in row:
-                c.fill = f
-        row[1].fill = row[2].fill = edit
-    if rows:
-        dv_ = DataValidation(type="list", formula1='"' + ",".join(DECISIONS) + '"', allow_blank=True,
-                             showErrorMessage=False)
-        ws.add_data_validation(dv_)
-        dv_.add("B2:B" + str(len(rows) + 1))
+                     c["evidence"], c["times"], c["first"], c["last"], c["officers"], c["conf"], c["how"], c["note"],
+                     P["id"], c["dec"] + SEP + c["com"]])
+    review_sheet("Driver-Vehicle",
+                 ["Status", "Decision", "Comment", "Reviewed", "Driver / person", "Licence", "Driver company", "Vehicle",
+                  "Plate", "Deck", "Vehicle company", "Registered owner", "Evidence", "Times", "First", "Last",
+                  "Officers", "Confidence", "Latest how found", "Latest note", "Link ID", "_was"], rows,
+                 {"Status": 22, "Decision": 14, "Comment": 36, "Driver / person": 26, "Driver company": 24,
+                  "Vehicle": 44, "Vehicle company": 24, "Registered owner": 24, "Evidence": 26, "First": 18, "Last": 18,
+                  "Latest how found": 36, "Latest note": 60, "Link ID": 34})
+
+    rows = []
+    for P in sorted((P for P in pairs.values() if P["kind"] == "assoc"),
+                    key=lambda P: (order.get(P["status"], 9), -len(P["evidence"]))):
+        c, a, b = pair_cells(P), P["per"], P["b"]
+        rows.append([c["status"], c["dec"], c["com"], c["reviewed"], a["label"], a["licence"], a["company"],
+                     b["label"], b["licence"], b["company"], c["evidence"], c["times"], c["first"], c["last"],
+                     c["officers"], c["how"], c["note"], P["id"], c["dec"] + SEP + c["com"]])
+    review_sheet("Associations",
+                 ["Status", "Decision", "Comment", "Reviewed", "Person A", "Licence A", "Company A", "Person B",
+                  "Licence B", "Company B", "Evidence", "Times", "First", "Last", "Officers", "Latest how found",
+                  "Latest note", "Link ID", "_was"], rows,
+                 {"Status": 22, "Decision": 14, "Comment": 36, "Person A": 26, "Company A": 24, "Person B": 26,
+                  "Company B": 24, "Evidence": 26, "First": 18, "Last": 18, "Latest how found": 30,
+                  "Latest note": 60, "Link ID": 34})
 
     rows = []
     for L in sorted(links.values(), key=lambda L: -L["count"]):
@@ -836,10 +1111,12 @@ def graph_rows(model, links, ring, pairs, officers_too=True):
         if v in ring and o in ring:
             edges.append({"source": o, "target": v, "relation": "On file", "count": 1, "first": None, "last": None,
                           "status": "", "open": False, "officers": Counter(), "evidence": []})
-    # A driver-vehicle link carries its pair's status (company driver, open
-    # lead, reviewed...); every other link has none.
+    # A pair's links carry its status (company driver, open lead, yours...);
+    # a link you removed is left out.
     for L in links.values():
         P = pairs.get(L.get("pair"))
+        if P and P["status"] == "Removed":
+            continue
         L["status"] = P["status"] if P else ""
         L["open"] = bool(P) and P["status"] in OPEN
         L["comment"] = s_((P["review"] or {}).get("comment")) if P else ""
@@ -847,15 +1124,14 @@ def graph_rows(model, links, ring, pairs, officers_too=True):
     off_nodes, off_edges = {}, []
     if officers_too:
         for k in ring:
-            for kind_counts in [Counter((e["officer"], e["kind"]) for e in N[k]["events"])]:
-                for (off, kind), c in kind_counts.items():
-                    oid = "officer:" + off
-                    off_nodes[oid] = {"id": oid, "type": "Officer", "label": off, "licence": "", "plate": "", "deck": "",
-                                      "company": "", "detail": "Officer", "in_data": True, "notes": 0, "stops": 0,
-                                      "queries": 0, "events": [], "officers": Counter()}
-                    off_edges.append({"source": oid, "target": k, "relation": {"Query": "Queried", "Stop": "Stopped", "Note": "Noted"}[kind],
-                                      "count": c, "first": None, "last": None, "status": "", "open": False,
-                                      "officers": Counter(), "evidence": []})
+            for (off, kind), c in Counter((e["officer"], e["kind"]) for e in N[k]["events"]).items():
+                oid = "officer:" + off
+                off_nodes[oid] = {"id": oid, "type": "Officer", "label": off, "licence": "", "plate": "", "deck": "",
+                                  "company": "", "detail": "Officer", "in_data": True, "notes": 0, "stops": 0,
+                                  "queries": 0, "events": [], "officers": Counter()}
+                off_edges.append({"source": oid, "target": k, "relation": {"Query": "Queried", "Stop": "Stopped", "Note": "Noted"}[kind],
+                                  "count": c, "first": None, "last": None, "status": "", "open": False,
+                                  "officers": Counter(), "evidence": []})
     return nodes + list(off_nodes.values()), edges + off_edges
 
 
@@ -901,28 +1177,75 @@ def write_gephi(dir_, model, links, ring, pairs):
     open(os.path.join(dir_, "PVH_Intel.graphml"), "w", encoding="utf-8").write("\n".join(out))
 
 
-def write_map(path, model, links, notes, ring, pairs, meta):
-    nodes, edges = graph_rows(model, links, ring, pairs)
+# ------------------------------------------------------------------ the map
+def canvas_label(n):
+    """Two short lines for the drawing; the full label is in the side panel."""
+    cut = lambda s, k: s if len(s) <= k else s[:k - 1] + "…"
+    if n["type"] == "Vehicle":
+        top = " · ".join(x for x in (("Deck " + n["deck"]) if n["deck"] else "No deck", n.get("owner_name", "")) if x)
+        bottom = " · ".join(x for x in (n["plate"], n.get("desc", "")) if x)
+        return cut(top, 30) + ("\n" + cut(bottom, 30) if bottom else "")
+    return cut(n["label"], 30) + ("\n" + n["licence"] if n["licence"] else "")
+
+
+def map_data(model, links, notes, ring, pairs, meta):
+    """Everything the map draws. Every record is included so any of them can
+    be found and linked; only the active part of the registry starts visible."""
     N = model.nodes
     by_node = defaultdict(list)
     for nt in notes:
         if not nt["removed"]:
             by_node[nt["node"]].append({"w": fmt_when(nt["when"]), "o": nt["officer"], "b": nt["body"]})
-    data = {"nodes": [], "edges": [], "meta": meta}
-    for n in nodes:
-        evs = sorted((e for e in n["events"] if e["when"]), key=lambda e: e["when"], reverse=True)
-        data["nodes"].append({"id": n["id"], "label": n["label"], "type": n["type"], "lic": n["licence"] or n["plate"],
-                              "co": n["company"], "n": n["notes"], "s": n["stops"], "q": n["queries"], "in": n["in_data"],
-                              "ev": [[e["kind"], fmt_when(e["when"]), e["officer"]] for e in evs[:40]],
-                              "notes": by_node.get(n["id"], [])[:40]})
-    for e in edges:
-        data["edges"].append({"from": e["source"], "to": e["target"], "rel": e["relation"], "c": e["count"],
-                              "st": e["status"], "open": e["open"], "cm": e.get("comment", ""),
-                              "ev": [[fmt_when(v.get("when")), v.get("officer", ""), v.get("how", ""), v.get("text", "")[:300]] for v in e["evidence"][:10]]})
-    head, rest = MAP_HTML.split("__VISLIB__")
-    mid, tail = rest.split("__DATA__")
-    html = head + vis_script() + mid + json.dumps(data).replace("</", "<\\/") + tail
-    open(path, "w", encoding="utf-8").write(html)
+    show = set(ring)
+    for P in pairs.values():
+        if P["status"] != "Removed":
+            show |= {P["per"]["id"], P["b"]["id"]}
+    for v, o in model.veh_owner.items():
+        if v in show:
+            show.add(o)
+    nodes = []
+    for nid, n in N.items():
+        rec = {"id": nid, "type": n["type"], "label": n["label"], "l": canvas_label(n), "lic": n["licence"],
+               "plate": n["plate"], "co": n["company"], "deck": n["deck"], "own": n.get("owner_name", ""),
+               "desc": n.get("desc", ""), "n": n["notes"], "s": n["stops"], "q": n["queries"], "in": n["in_data"],
+               "show": nid in show}
+        if n["events"] or by_node.get(nid):
+            evs = sorted((e for e in n["events"] if e["when"]), key=lambda e: e["when"], reverse=True)
+            rec["ev"] = [[e["kind"], fmt_when(e["when"]), e["officer"]] for e in evs[:40]]
+            rec["notes"] = by_node.get(nid, [])[:40]
+        nodes.append(rec)
+
+    def ev_rows(evidence):
+        return [[fmt_when(e.get("when")), e.get("officer", ""), e.get("how", ""), s_(e.get("text"))[:300]] for e in evidence]
+
+    edges = [{"id": "own|" + v, "from": o, "to": v, "kind": "owns"} for v, o in model.veh_owner.items()]
+    for pid, P in pairs.items():
+        if P["status"] == "On file":   # the owner seen with their own car -- the "owns" line says it
+            continue
+        r = P["review"] or {}
+        edges.append({"id": pid, "from": P["per"]["id"], "to": P["b"]["id"], "kind": P["kind"], "st": P["status"],
+                      "open": P["status"] in OPEN, "removed": P["status"] == "Removed", "mine": P["added"],
+                      "dec": norm_decision(r.get("decision")), "cm": s_(r.get("comment")), "c": len(P["evidence"]),
+                      "ev": ev_rows(P["evidence"][::-1][:10]),
+                      "reop": sorted({e.get("officer", "") + " " + fmt_when(e.get("when")) for e in P["reopened_by"]})})
+    i = 0
+    for L in links.values():
+        if L.get("pair") or L["relation"] == "My link":
+            continue
+        edges.append({"id": "lnk|%d" % i, "from": L["source"], "to": L["target"], "kind": "other",
+                      "rel": L["relation"], "c": L["count"], "ev": ev_rows(L["evidence"][:10])})
+        i += 1
+    officers = {}
+    for nid in ring:
+        for (off, kind), c in Counter((e["officer"], e["kind"]) for e in N[nid]["events"]).items():
+            officers["officer:" + off] = off
+            edges.append({"id": "off|%d" % i, "from": "officer:" + off, "to": nid, "kind": "officer",
+                          "rel": {"Query": "Queried", "Stop": "Stopped", "Note": "Noted"}[kind], "c": c})
+            i += 1
+    for oid, off in officers.items():
+        nodes.append({"id": oid, "type": "Officer", "label": off, "l": off, "lic": "", "plate": "", "co": "",
+                      "deck": "", "own": "", "desc": "", "n": 0, "s": 0, "q": 0, "in": True, "show": True})
+    return {"nodes": nodes, "edges": edges, "meta": meta}
 
 
 # The graph library is built into the map file, so the map opens offline and
@@ -933,16 +1256,34 @@ def write_map(path, model, links, notes, ring, pairs, meta):
 VIS_FILE = os.path.join(HERE, "vendor", "vis-network-9.1.9.min.js")
 VIS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"
 VIS_SRI = "sha512-iTgTmIgxyA2YehKNVbzLJx4j9SnuC5ihtRrtxVkXH/9nF3vXBN5YeNQp+6wufBWKD3u+roHVNOvWBMufQnBbug=="
+_VIS = None
 
 
 def vis_script():
-    try:
-        with open(VIS_FILE, encoding="utf-8") as f:
-            lib = f.read()
-    except OSError:
-        print("  vendor/vis-network-9.1.9.min.js not found -- the map will load the library online.")
-        return '<script src="%s" integrity="%s" crossorigin="anonymous"></script>' % (VIS_CDN, VIS_SRI)
-    return "<script>\n" + re.sub(r"</(script)", r"<\\/\1", lib, flags=re.I) + "\n</script>"
+    global _VIS
+    if _VIS is None:
+        try:
+            with open(VIS_FILE, encoding="utf-8") as f:
+                lib = f.read()
+            _VIS = "<script>\n" + re.sub(r"</(script)", r"<\\/\1", lib, flags=re.I) + "\n</script>"
+        except OSError:
+            print("  vendor/vis-network-9.1.9.min.js not found -- the map will load the library online.")
+            _VIS = '<script src="%s" integrity="%s" crossorigin="anonymous"></script>' % (VIS_CDN, VIS_SRI)
+    return _VIS
+
+
+def render_map(data, token=None):
+    """The map page. With a token it can make and remove links through the
+    local server (serve()); without one -- the file in intel/ -- it only views."""
+    head, rest = MAP_HTML.split("__VISLIB__")
+    mid, rest = rest.split("__DATA__")
+    mid2, tail = rest.split("__EDIT__")
+    edit = json.dumps({"token": token}) if token else "null"
+    return head + vis_script() + mid + json.dumps(data).replace("</", "<\\/") + mid2 + edit + tail
+
+
+def write_map(path, data):
+    open(path, "w", encoding="utf-8").write(render_map(data))
 
 
 MAP_HTML = r"""<!doctype html>
@@ -955,76 +1296,348 @@ __VISLIB__
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.4 -apple-system,"Segoe UI",Roboto,sans-serif;height:100vh;display:flex;flex-direction:column}
 header{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
 header b{font-size:15px;letter-spacing:.04em}header small{color:var(--dim)}
-input[type=search]{flex:0 1 240px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
+input[type=search]{flex:0 1 300px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
 label{display:inline-flex;gap:4px;align-items:center;color:var(--dim);cursor:pointer}
+#banner{display:none;padding:8px 12px;background:#fff4c2;color:#4a3a00;border-bottom:1px solid var(--line)}
+#banner.on{display:block}#banner.err{background:#f8d7da;color:#6b1717}
 #wrap{flex:1;display:flex;min-height:0}#net{flex:1;min-width:0}
-#side{width:380px;max-width:45vw;overflow:auto;border-left:1px solid var(--line);background:var(--panel);padding:12px}
+#side{width:420px;max-width:45vw;overflow:auto;border-left:1px solid var(--line);background:var(--panel);padding:12px}
 #side h2{font-size:16px;margin:0 0 4px}.k{color:var(--dim);font-size:12px}
-.sec{margin-top:12px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
-.it{border-top:1px solid var(--line);padding:6px 0}.it .k{display:block}.nof{color:var(--bad);font-weight:700}
-.lg{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:3px;vertical-align:middle}
+.sec{margin-top:14px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.it{border-top:1px solid var(--line);padding:6px 0}.it .k{display:block}
+.kv{display:grid;grid-template-columns:70px 1fr;gap:2px 8px;margin:6px 0}.kv span:nth-child(odd){color:var(--dim)}
 a{color:var(--accent);cursor:pointer}
+.chip{display:inline-block;font-size:11px;font-weight:700;border-radius:4px;padding:1px 6px;margin-left:4px;white-space:nowrap}
+.s-ok{background:#dcf2e4;color:#14532d}.s-open{background:#f8d7da;color:#7a1c1c}.s-co{background:#eae4f7;color:#4b2a8a}
+.s-grey{background:#e6e9ee;color:#4b5563}.s-assoc{background:#dbeafe;color:#1e3a8a}
+button.b{font:inherit;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--text);cursor:pointer;margin:6px 6px 0 0}
+button.b.p{background:var(--accent);border-color:var(--accent);color:#fff}button.b.d{color:var(--bad)}
+textarea{width:100%;min-height:56px;margin-top:8px;font:inherit;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text)}
+.lg{display:inline-block;width:22px;height:0;border-top:3px solid;vertical-align:middle;margin-right:4px}.lg.d{border-top-style:dashed}
+.ro{margin-top:10px;padding:8px;border-radius:8px;background:var(--bg)}
 </style></head><body>
 <header><b>PVH INTEL MAP</b><small id="meta"></small>
-<input type="search" id="q" placeholder="Find name, plate, licence…">
+<input type="search" id="q" placeholder="Find a name, deck, plate or licence, then Enter">
 <span id="types"></span>
-<label><input type="checkbox" id="onlynof"> Only open leads</label>
+<label><input type="checkbox" id="onlyopen"> Only open leads</label>
+<label><input type="checkbox" id="showrem"> Show removed</label>
 </header>
-<div id="wrap"><div id="net"></div><div id="side"><div class="k">Click a record or a link for details.<br><br>
-Lines: <span style="color:#9aa5b1">grey</span> on file · <span style="color:#d9a21b">amber</span> note mention ·
-<span style="color:#3d8bfd">blue</span> same encounter · dotted = officer activity<br>
-Driver-vehicle: <span style="color:#c42b2b">red dashed</span> open lead (NOT ON FILE, Follow up ⚑, Reopened) ·
-<span style="color:#8e6fd1">purple dashed</span> company driver · <span style="color:#b8bfc8">pale dashed</span> reviewed (authorized / false link)<br><br>
-To review a link, use the Decision column on the Driver-Vehicle sheet in PVH_Intel.xlsx, then run the export again.</div></div></div>
+<div id="banner"></div>
+<div id="wrap"><div id="net"></div><div id="side"></div></div>
 <script>
-const D=__DATA__;
-const COL={"Vehicle":"#f0b429","Operator":"#3d8bfd","Owner-operator":"#7b61ff","Owner":"#8a94a3","Officer":"#2fb67c","Record":"#bbb"};
+let D=__DATA__;
+const EDIT=__EDIT__;
+const COL={"Vehicle":"#f0b429","Operator":"#3d8bfd","Owner-operator":"#7b61ff","Owner":"#8a94a3","Officer":"#2fb67c","Record":"#bbbbbb"};
 const SHAPE={"Vehicle":"box","Officer":"diamond"};
-const ECOL={"On file":"#9aa5b1","Note mention":"#d9a21b","Same encounter":"#3d8bfd"};
-const SCOL={"Company driver":"#8e6fd1","Authorized driver":"#b8bfc8","False link":"#b8bfc8"};
-const ecol=e=>e.open?"#c42b2b":(SCOL[e.st]||ECOL[e.rel]||"#2fb67c");
-const flag=e=>e.st==="Follow up"||e.st==="Reopened"?" \u2691":"";
-const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-document.getElementById("meta").textContent="pulled "+D.meta.pulled+" · "+D.meta.n_notes+" notes · "+D.meta.n_stops+" stops · "+D.meta.n_queries+" queries";
-const byId={};D.nodes.forEach(n=>byId[n.id]=n);
+const PERSON=new Set(["Operator","Owner-operator","Owner"]);
+const YOURS=new Set(["Confirmed","My link"]);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const show={};Object.keys(COL).forEach(t=>show[t]=t!=="Officer");
+const onlyopen=document.getElementById("onlyopen"), showrem=document.getElementById("showrem"), side_=document.getElementById("side");
+let byId={}, EB={}, shown=new Set(), openN=new Set(), LINK=null;
+function index(){
+  byId={};D.nodes.forEach(n=>{byId[n.id]=n;if(n.show)shown.add(n.id);});
+  EB={};openN=new Set();
+  D.edges.forEach(e=>{EB[e.id]=e;if(e.open&&!e.removed){openN.add(e.from);openN.add(e.to);}});
+}
+index();
+const m=D.meta;
+document.getElementById("meta").textContent="pulled "+m.pulled+" · "+m.n_notes+" notes · "+m.n_stops+" stops · "+m.n_queries+" queries";
 document.getElementById("types").innerHTML=Object.keys(COL).filter(t=>D.nodes.some(n=>n.type===t)).map(t=>
-  '<label><input type="checkbox" data-t="'+t+'" '+(show[t]?"checked":"")+'><span class="lg" style="background:'+COL[t]+'"></span>'+t+'</label>').join(" ");
-const act=n=>n.n+n.s+n.q;
-const nodes=new vis.DataSet(D.nodes.map(n=>({id:n.id,label:n.label.length>34?n.label.slice(0,32)+"…":n.label,
-  shape:SHAPE[n.type]||"dot",size:10+Math.min(30,act(n)*2),color:{background:COL[n.type]||"#bbb",border:n.in?"#0000":"#c42b2b"},
-  borderWidth:n.in?0:2,font:{color:getComputedStyle(document.body).color,size:12},title:n.type+": "+n.label})));
-const edges=new vis.DataSet(D.edges.map((e,i)=>({id:i,from:e.from,to:e.to,
-  width:SCOL[e.st]==="#b8bfc8"?1:Math.min(8,1+e.c),label:flag(e).trim()||undefined,
-  color:{color:ecol(e),opacity:.85},dashes:(e.open||SCOL[e.st])?[8,5]:(/Queried|Stopped|Noted/.test(e.rel)?[2,4]:false),
-  title:e.rel+(e.st?" — "+e.st:"")+(e.c>1?" ×"+e.c:"")})));
-const view=new vis.DataView(nodes,{filter:n=>{const d=byId[n.id];if(!show[d.type])return false;
-  if(document.getElementById("onlynof").checked){return D.edges.some(e=>e.open&&(e.from===n.id||e.to===n.id));}return true;}});
-const net=new vis.Network(document.getElementById("net"),{nodes:view,edges:edges},
+  '<label><input type="checkbox" data-t="'+esc(t)+'" '+(show[t]?"checked":"")+'><span class="lg" style="border-color:'+COL[t]+';width:10px;border-top-width:10px;border-radius:5px"></span>'+esc(t)+'</label>').join(" ");
+const act=n=>(n.n||0)+(n.s||0)+(n.q||0);
+function chip(st){
+  const c=YOURS.has(st)?"s-ok":(st==="NOT ON FILE"||st==="Follow up"||st==="Reopened")?"s-open":st==="Company driver"?"s-co":st==="Seen together"?"s-assoc":"s-grey";
+  return '<span class="chip '+c+'">'+esc(st)+'</span>';
+}
+function estyle(e){
+  if(e.kind==="owns")return {c:"#9aa5b1",w:1.5,d:false};
+  if(e.kind==="officer")return {c:"#2fb67c",w:1,d:[2,4]};
+  if(e.kind==="other")return {c:"#d9a21b",w:1,d:[4,4]};
+  if(e.removed)return {c:"#c8ced6",w:1,d:[1,6]};
+  const mine=YOURS.has(e.st);
+  if(e.kind==="assoc")return {c:"#3d8bfd",w:mine?3:2,d:mine?false:[6,4]};
+  if(mine)return {c:"#1f9d55",w:3,d:false};
+  if(e.open)return {c:"#c42b2b",w:2.5,d:[8,5]};
+  if(e.st==="Company driver")return {c:"#8e6fd1",w:2,d:[8,5]};
+  return {c:"#9aa5b1",w:1.5,d:[8,5]};
+}
+const fg=()=>getComputedStyle(document.body).color;
+function toNode(n){return {id:n.id,label:n.l||n.label,shape:SHAPE[n.type]||"dot",size:10+Math.min(30,act(n)*2),
+  color:{background:COL[n.type]||"#bbb",border:n.in?"#0000":"#c42b2b"},borderWidth:n.in?0:2,
+  font:{color:fg(),size:12},title:n.type+": "+n.label};}
+function toEdge(e){const s=estyle(e);
+  const what=e.kind==="owns"?"owns":e.kind==="drives"?"drives":e.kind==="assoc"?"associated":e.rel;
+  return {id:e.id,from:e.from,to:e.to,width:s.w,dashes:s.d,color:{color:s.c,opacity:.9},
+    label:(e.kind==="owns"||e.kind==="drives"||e.kind==="assoc")?what:undefined,font:{size:9,color:"#8a94a3",strokeWidth:0},
+    title:what+(e.st?" — "+e.st:"")+(e.c>1?" ×"+e.c:"")};}
+const nodes=new vis.DataSet(D.nodes.map(toNode));
+const edges=new vis.DataSet(D.edges.map(toEdge));
+const nodeView=new vis.DataView(nodes,{filter:n=>{const d=byId[n.id];
+  return !!d&&show[d.type]&&shown.has(n.id)&&(!onlyopen.checked||openN.has(n.id));}});
+const edgeView=new vis.DataView(edges,{filter:x=>{const e=EB[x.id];if(!e)return false;
+  if(e.removed&&!showrem.checked)return false;if(e.kind==="officer"&&!show.Officer)return false;
+  return !onlyopen.checked||e.open||e.kind==="owns";}});
+const net=new vis.Network(document.getElementById("net"),{nodes:nodeView,edges:edgeView},
   {physics:{solver:"forceAtlas2Based",stabilization:{iterations:300}},interaction:{hover:true,multiselect:false}});
-document.getElementById("types").addEventListener("change",e=>{show[e.target.dataset.t]=e.target.checked;view.refresh();});
-document.getElementById("onlynof").addEventListener("change",()=>view.refresh());
-document.getElementById("q").addEventListener("keydown",e=>{if(e.key!=="Enter")return;const s=e.target.value.trim().toLowerCase();if(!s)return;
-  const hit=D.nodes.find(n=>show[n.type]&&(n.label.toLowerCase().includes(s)||String(n.lic).toLowerCase().includes(s)));
-  if(hit){net.selectNodes([hit.id]);net.focus(hit.id,{scale:1.4,animation:true});side(hit.id);}});
-function side(id){const n=byId[id];if(!n)return;
-  const ls=D.edges.map((e,i)=>[e,i]).filter(([e])=>e.from===id||e.to===id);
-  let h='<h2>'+esc(n.label)+'</h2><div class="k">'+esc(n.type)+(n.lic?' · '+esc(n.lic):'')+(n.co?' · '+esc(n.co):'')+(n.in?'':' · <span class="nof">not in current data</span>')+'</div>'+
-    '<div class="k">'+n.n+' notes · '+n.s+' stops · '+n.q+' queries</div>';
-  h+='<div class="sec">Links ('+ls.length+')</div>'+ls.map(([e,i])=>{const o=byId[e.from===id?e.to:e.from];
-    return '<div class="it"><a data-pick="'+esc(o.id)+'">'+esc(o.label)+'</a> <span class="k">'+esc(e.rel)+(e.c>1?' ×'+e.c:'')+'</span>'+(e.st?' <span class="'+(e.open?'nof':'k')+'">'+esc(e.st)+flag(e)+'</span>':'')+(e.cm?'<span class="k">Your comment: '+esc(e.cm)+'</span>':'')+
-      e.ev.map(v=>'<span class="k">'+esc(v[0])+' · '+esc(v[1])+' · '+esc(v[2])+(v[3]?' — '+esc(v[3]):'')+'</span>').join("")+'</div>';}).join("");
-  if(n.notes.length)h+='<div class="sec">Notes</div>'+n.notes.map(x=>'<div class="it"><span class="k">'+esc(x.w)+' · '+esc(x.o)+'</span>'+esc(x.b)+'</div>').join("");
-  if(n.ev.length)h+='<div class="sec">Activity</div>'+n.ev.map(x=>'<div class="it"><b>'+esc(x[0])+'</b> '+esc(x[1])+' · '+esc(x[2])+'</div>').join("");
-  document.getElementById("side").innerHTML=h;}
-function pick(id){const d=byId[id];if(d&&!show[d.type]){show[d.type]=true;document.querySelector('[data-t="'+d.type+'"]').checked=true;view.refresh();}
-  net.selectNodes([id]);net.focus(id,{scale:1.3,animation:true});side(id);}
-net.on("click",p=>{if(p.nodes.length)side(p.nodes[0]);else if(p.edges.length){const e=D.edges[p.edges[0]];side(e.from);}});
-/* Record ids come from the shared database, so a link carries its id as plain
-   data and is never pasted into code. */
-document.getElementById("side").addEventListener("click",e=>{const a=e.target.closest("[data-pick]");if(a)pick(a.dataset.pick);});
+function refresh(){nodeView.refresh();edgeView.refresh();}
+function banner(html,err){const b=document.getElementById("banner");b.className=html?("on"+(err?" err":"")):"";b.innerHTML=html||"";}
+function reveal(id){shown.add(id);D.edges.forEach(e=>{if(e.kind!=="officer"&&(e.from===id||e.to===id)){shown.add(e.from);shown.add(e.to);}});}
+
+/* --- side panel */
+function home(){
+  side_.innerHTML='<h2>Who drives what</h2><div class="k">Click a record or a line for details. Search finds any record in the PVH data, shown or not.</div>'+
+    '<div class="sec">Lines</div><div class="it"><span class="lg" style="border-color:#9aa5b1"></span>owns (on file)<br>'+
+    '<span class="lg" style="border-color:#1f9d55"></span>drives — confirmed or your link<br>'+
+    '<span class="lg d" style="border-color:#c42b2b"></span>drives — not on file, follow up or reopened (open lead)<br>'+
+    '<span class="lg d" style="border-color:#8e6fd1"></span>drives — company driver<br>'+
+    '<span class="lg" style="border-color:#3d8bfd"></span>associated — confirmed or your link<br>'+
+    '<span class="lg d" style="border-color:#3d8bfd"></span>associated — seen together in a note<br>'+
+    '<span class="lg d" style="border-color:#d9a21b"></span>other note mention · <span class="lg d" style="border-color:#2fb67c"></span>officer activity (tick Officer)</div>'+
+    (EDIT?'<div class="sec">Linking</div><div class="it">Click a person or vehicle, then <b>Link to…</b>, then the other record (or find it in the search box). Click a line to confirm, follow up, remove or restore it. Changes are saved at once.</div>'
+         :'<div class="ro">This copy only views. To make or remove links, run <b>Build_PVH_Intel.bat</b>; the map opens in your browser ready for linking.</div>');
+}
+function item(id,extra){const n=byId[id];
+  return '<div class="it"><a data-pick="'+esc(id)+'">'+esc(n?n.label:id)+'</a>'+(extra||"")+'</div>';}
+function side(id){
+  const n=byId[id];if(!n)return home();
+  let h='<h2>'+esc(n.label)+'</h2><div class="k">'+esc(n.type)+(n.lic&&n.type!=="Vehicle"?' · '+esc(n.lic):'')+(n.co?' · '+esc(n.co):'')+
+    (n.in?'':' · <span style="color:var(--bad)">not in current data</span>')+'</div>';
+  if(n.type==="Vehicle")h+='<div class="kv"><span>Deck</span><span>'+esc(n.deck||"—")+'</span><span>Owner</span><span>'+esc(n.own||"—")+
+    '</span><span>Plate</span><span>'+esc(n.plate||"—")+'</span><span>Vehicle</span><span>'+esc(n.desc||"—")+'</span><span>Licence</span><span>'+esc(n.lic||"—")+'</span></div>';
+  if(n.type!=="Officer")h+='<div class="k">'+(n.n||0)+' notes · '+(n.s||0)+' stops · '+(n.q||0)+' queries</div>';
+  if(EDIT&&n.type!=="Officer")h+='<button class="b p" data-act="linkfrom" data-id="'+esc(id)+'">Link to…</button>';
+  const mine=D.edges.filter(e=>e.kind!=="officer"&&(e.from===id||e.to===id)&&(!e.removed||showrem.checked));
+  const other=e=>e.from===id?e.to:e.from;
+  const pair=e=>chip(e.st)+' <a class="k" data-edge="'+esc(e.id)+'">review</a>';
+  const group=(title,list,fn)=>list.length?'<div class="sec">'+title+' ('+list.length+')</div>'+list.map(fn).join(""):"";
+  if(n.type==="Vehicle"){
+    h+=group("Owner",mine.filter(e=>e.kind==="owns"),e=>item(other(e)));
+    h+=group("Drivers",mine.filter(e=>e.kind==="drives"),e=>item(other(e),pair(e)));
+  }else{
+    h+=group("Owns",mine.filter(e=>e.kind==="owns"),e=>item(other(e)));
+    h+=group("Drives",mine.filter(e=>e.kind==="drives"),e=>item(other(e),pair(e)));
+    h+=group("Associated with",mine.filter(e=>e.kind==="assoc"),e=>item(other(e),pair(e)));
+  }
+  h+=group("Other links",mine.filter(e=>e.kind==="other"),e=>item(other(e),' <span class="k">'+esc(e.rel)+'</span>'));
+  if(n.notes&&n.notes.length)h+='<div class="sec">Notes</div>'+n.notes.map(x=>'<div class="it"><span class="k">'+esc(x.w)+' · '+esc(x.o)+'</span>'+esc(x.b)+'</div>').join("");
+  if(n.ev&&n.ev.length)h+='<div class="sec">Activity</div>'+n.ev.map(x=>'<div class="it"><b>'+esc(x[0])+'</b> '+esc(x[1])+' · '+esc(x[2])+'</div>').join("");
+  side_.innerHTML=h;
+}
+function edgeSide(eid){
+  const e=EB[eid];if(!e)return home();
+  const a=byId[e.from],b=byId[e.to];
+  let h='<h2>'+(e.kind==="drives"?"Drives":"Associated")+' '+chip(e.st)+'</h2>'+item(e.from)+
+    '<div class="k">'+(e.kind==="drives"?"drives":"associated with")+'</div>'+item(e.to);
+  if(e.reop&&e.reop.length)h+='<div class="ro">New since your decision: '+esc(e.reop.join("; "))+'</div>';
+  if(EDIT){
+    h+='<textarea id="cmt" placeholder="Comment (optional)">'+esc(e.cm||"")+'</textarea>';
+    const btn=(d,t,cls)=>'<button class="b '+(cls||"")+'" data-act="decide" data-id="'+esc(e.id)+'" data-dec="'+esc(d)+'">'+t+'</button>';
+    if(e.removed)h+=btn("","Restore link","p");
+    else{
+      if(!YOURS.has(e.st))h+=btn("Confirmed","Confirm","p");
+      if(e.st!=="Follow up")h+=btn("Follow up","Follow up");
+      h+=btn("Removed","Remove link","d");
+      if(e.dec&&e.st!=="Reopened")h+=btn("","Clear decision");
+      h+=btn(e.dec||"","Save comment");
+    }
+  }else if(e.cm)h+='<div class="ro">Your comment: '+esc(e.cm)+'</div>';
+  if(e.ev&&e.ev.length)h+='<div class="sec">Evidence ('+e.c+')</div>'+e.ev.map(v=>'<div class="it"><span class="k">'+esc(v[0])+' · '+esc(v[1])+' · '+esc(v[2])+'</span>'+esc(v[3])+'</div>').join("");
+  else if(e.mine)h+='<div class="sec">Evidence</div><div class="it k">Linked by you; no sightings yet.</div>';
+  side_.innerHTML=h;
+}
+
+/* --- picking, searching and linking */
+function pick(id){
+  if(LINK&&LINK!==id)return linkTarget(id);
+  if(!byId[id])return;
+  if(!show[byId[id].type]){show[byId[id].type]=true;const c=document.querySelector('[data-t="'+byId[id].type+'"]');if(c)c.checked=true;}
+  reveal(id);refresh();net.selectNodes([id]);net.focus(id,{scale:1.2,animation:true});side(id);
+}
+const norm=s=>String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+const wordsOf=s=>String(s||"").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+function findAll(q){
+  const qa=norm(q), qw=wordsOf(q), dm=/^\s*(?:deck\s*)?#?\s*(\d{1,4})\s*$/i.exec(q);
+  const out=[];
+  D.nodes.forEach(n=>{
+    if(n.type==="Officer")return;
+    let s=0;
+    if(dm&&n.deck===dm[1])s=100;
+    else if(qa.length>=3&&(norm(n.plate)===qa||norm(n.lic)===qa))s=90;
+    else if(qw.length&&qw.join("").length>=2){const w=wordsOf(n.label);if(qw.every(x=>w.some(y=>y.startsWith(x))))s=60;}
+    if(s)out.push([s,n]);
+  });
+  out.sort((a,b)=>b[0]-a[0]||a[1].label.localeCompare(b[1].label));
+  return out.map(x=>x[1]);
+}
+function startLink(id){
+  LINK=id;
+  banner('Linking from <b>'+esc(byId[id].label)+'</b>: click the vehicle or person to link to, or find it in the search box. <a data-act="cancel">Cancel</a> (Esc)');
+}
+function cancelLink(){LINK=null;banner("");}
+function linkTarget(id){
+  const a=byId[LINK],b=byId[id];if(!a||!b)return;
+  const ok=(PERSON.has(a.type)&&PERSON.has(b.type))||(PERSON.has(a.type)&&b.type==="Vehicle")||(a.type==="Vehicle"&&PERSON.has(b.type));
+  if(!ok){banner('A link joins a person to a vehicle, or two people. Pick another record, or <a data-act="cancel">cancel</a>.',true);return;}
+  reveal(id);refresh();
+  const per=PERSON.has(a.type)?a:b, oth=per===a?b:a;
+  side_.innerHTML='<h2>New link</h2>'+item(per.id)+'<div class="k">'+(oth.type==="Vehicle"?"drives":"associated with")+'</div>'+item(oth.id)+
+    '<textarea id="cmt" placeholder="Comment (optional) — e.g. seen driving it, drives for this owner, same address"></textarea>'+
+    '<button class="b p" data-act="savelink" data-a="'+esc(a.id)+'" data-b="'+esc(b.id)+'">Save link</button><button class="b" data-act="cancel">Cancel</button>';
+}
+async function send(op){
+  if(!EDIT)return null;
+  let r;
+  try{r=await fetch("/api/edit",{method:"POST",headers:{"Content-Type":"application/json","X-PVH-Token":EDIT.token},body:JSON.stringify(op)});}
+  catch(e){banner("The intel tool is no longer running, so nothing was saved. Run Build_PVH_Intel.bat again to keep linking.",true);return null;}
+  const j=await r.json().catch(()=>({ok:false,error:"The intel tool answered HTTP "+r.status+"."}));
+  if(!j.ok){banner(esc(j.error||"Not saved."),true);return null;}
+  D=j.data;index();
+  nodes.update(D.nodes.map(toNode));
+  const keep=new Set(D.nodes.map(n=>n.id));nodes.remove(nodes.getIds().filter(i=>!keep.has(i)));
+  edges.clear();edges.add(D.edges.map(toEdge));refresh();
+  banner(j.note?esc(j.note):"Saved.",!!j.note);if(!j.note)setTimeout(()=>{if(!LINK)banner("");},2500);
+  return j;
+}
+
+/* --- events */
+document.getElementById("types").addEventListener("change",e=>{show[e.target.dataset.t]=e.target.checked;refresh();});
+onlyopen.addEventListener("change",refresh);showrem.addEventListener("change",refresh);
+document.getElementById("q").addEventListener("keydown",e=>{
+  if(e.key!=="Enter")return;const s=e.target.value.trim();if(!s)return;
+  const hits=findAll(s);
+  if(!hits.length){banner("Nothing in the PVH data matches “"+esc(s)+"”.",true);return;}
+  if(hits.length===1)return pick(hits[0].id);
+  side_.innerHTML='<h2>'+hits.length+' matches</h2>'+(LINK?'<div class="k">Pick the record to link to.</div>':'')+
+    hits.slice(0,60).map(n=>item(n.id,'<span class="k">'+esc(n.type)+(n.lic&&n.type!=="Vehicle"?' · '+esc(n.lic):'')+'</span>')).join("");
+});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&LINK){cancelLink();home();}});
+net.on("click",p=>{
+  if(p.nodes.length){const id=p.nodes[0];if(LINK)return linkTarget(id);return side(id);}
+  if(p.edges.length){const e=EB[p.edges[0]];if(!e)return;if(e.kind==="drives"||e.kind==="assoc")return edgeSide(e.id);return side(e.from);}
+});
+document.body.addEventListener("click",async ev=>{
+  const p=ev.target.closest("[data-pick]");if(p)return pick(p.dataset.pick);
+  const g=ev.target.closest("[data-edge]");if(g){net.selectEdges([g.dataset.edge]);return edgeSide(g.dataset.edge);}
+  const a=ev.target.closest("[data-act]");if(!a)return;
+  const what=a.dataset.act, c=document.getElementById("cmt"), cm=c?c.value:"";
+  if(what==="linkfrom")return startLink(a.dataset.id);
+  if(what==="cancel"){cancelLink();return home();}
+  if(what==="savelink"){const j=await send({op:"add",a:a.dataset.a,b:a.dataset.b,comment:cm});if(j){cancelLink();edgeSide(j.focus);}return;}
+  if(what==="decide"){const j=await send({op:"decide",id:a.dataset.id,decision:a.dataset.dec,comment:cm});if(j)edgeSide(j.focus);}
+});
+home();
 </script></body></html>
 """
+
+
+# ------------------------------------------------------------------ build and serve
+def rebuild(state):
+    """Build every output from the snapshot and your links. Returns a note for
+    the map ("" when all went well)."""
+    model = Model(state["db"])
+    events, notes, links, pairs, officers = analyse(model, state["snap"])
+    n_edits = apply_links(model, links, pairs, state["out"], state["xl"])
+    act, ring = active_set(model, links)
+    note = ""
+    try:
+        write_xlsx(state["xl"], model, events, notes, links, pairs, officers, act, state["meta"])
+    except PermissionError:
+        note = "PVH_Intel.xlsx is open in Excel, so it was not updated. Close it; it updates with your next change."
+    write_gephi(state["out"], model, links, ring, pairs)
+    data = map_data(model, links, notes, ring, pairs, state["meta"])
+    write_map(os.path.join(state["out"], "PVH_Intel_Map.html"), data)
+    state.update(model=model, pairs=pairs, links=links, act=act, data=data, n_edits=n_edits)
+    return note
+
+
+def serve(state, port=8765, browser=True):
+    """Show the map in the browser with linking turned on, until the window is
+    closed. Only this PC can reach it (127.0.0.1); every change must carry the
+    one-time key that is built into the page, so no other website can make one."""
+    import hmac
+    import secrets
+    import threading
+    import webbrowser
+    from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+    token = secrets.token_urlsafe(24)
+    where = {}
+    lock = threading.Lock()   # one change at a time
+
+    class Handler(BaseHTTPRequestHandler):
+        # Browsers open spare connections and leave them idle; drop those
+        # rather than letting them hold a request open.
+        timeout = 15
+
+        def reply(self, code, body, ctype="application/json; charset=utf-8"):
+            data = body.encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def host_ok(self):
+            return self.headers.get("Host", "") in ("127.0.0.1:%d" % where["port"], "localhost:%d" % where["port"])
+
+        def do_GET(self):
+            if not self.host_ok():
+                return self.reply(403, "Forbidden", "text/plain")
+            if self.path.split("?")[0] not in ("/", "/index.html"):
+                return self.reply(404, "Not found", "text/plain")
+            with lock:
+                page = render_map(state["data"], token)
+            self.reply(200, page, "text/html; charset=utf-8")
+
+        def do_POST(self):
+            if not (self.host_ok() and self.path == "/api/edit"
+                    and hmac.compare_digest(self.headers.get("X-PVH-Token", ""), token)):
+                return self.reply(403, json.dumps({"ok": False, "error": "Not allowed."}))
+            try:
+                size = int(self.headers.get("Content-Length") or 0)
+                op = json.loads(self.rfile.read(size)) if 0 < size <= 65536 else None
+            except ValueError:
+                op = None
+            if not isinstance(op, dict):
+                return self.reply(400, json.dumps({"ok": False, "error": "That change could not be read."}))
+            with lock:
+                try:
+                    err, focus = apply_edit(op, state)
+                    if err:
+                        body = json.dumps({"ok": False, "error": err})
+                    else:
+                        note = rebuild(state)
+                        body = json.dumps({"ok": True, "data": state["data"], "note": note, "focus": focus})
+                        print("  saved: " + ("link added" if op.get("op") == "add" else (op.get("decision") or "decision cleared")), flush=True)
+                except Exception as exc:   # say so in the map rather than leave it waiting
+                    print("  could not save: " + repr(exc), flush=True)
+                    body = json.dumps({"ok": False, "error": "That change could not be saved: " + str(exc)})
+            self.reply(200, body)
+
+        def log_message(self, fmt, *args):
+            pass
+
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    except OSError:
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    httpd.daemon_threads = True
+    where["port"] = httpd.server_address[1]
+    url = "http://127.0.0.1:%d/" % where["port"]
+    print("")
+    print("The map is open in your browser: " + url)
+    print("Links you make or remove there are saved at once (intel\\link_reviews.csv),")
+    print("and the workbook and map files are rebuilt each time.")
+    print("Close this window (or press Ctrl+C) when you are done.", flush=True)
+    if browser:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    httpd.server_close()
 
 
 # ------------------------------------------------------------------ main
@@ -1034,6 +1647,9 @@ def main():
     ap.add_argument("--snapshot", help="snapshot file to read instead of pulling")
     ap.add_argument("--out", default=os.path.join(HERE, "intel"), help="output folder")
     ap.add_argument("--data", default=DATA_PATH, help="PVH_data.json")
+    ap.add_argument("--no-map", action="store_true", help="write the files only; do not open the map for linking")
+    ap.add_argument("--port", type=int, default=8765, help="port for the linking map (this PC only)")
+    ap.add_argument("--no-browser", action="store_true", help="serve the map but do not open a browser")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     snap_path = a.snapshot or os.path.join(a.out, "snapshot.json")
@@ -1049,28 +1665,29 @@ def main():
         json.dump(snap, open(snap_path, "w", encoding="utf-8"))
     if not os.path.exists(a.data):
         sys.exit("No " + a.data + " -- run the app build first.")
-    model = Model(json.load(open(a.data, encoding="utf-8")))
-    events, notes, links, pairs, officers = analyse(model, snap)
-    act, ring = active_set(model, links)
-    meta = {"pulled": fmt_when(parse_ts(snap.get("pulled_at"))), "by": s_(snap.get("by")),
-            "n_notes": len(snap.get("notes", [])), "n_stops": len(snap.get("checks", [])), "n_queries": len(snap.get("queries", []))}
-    xl = os.path.join(a.out, "PVH_Intel.xlsx")
-    n_edits = apply_reviews(pairs, a.out, xl)
-    if n_edits:
-        print("Decisions read from the workbook: %d (saved to %s)" % (n_edits, REVIEW_FILE))
-    try:
-        write_xlsx(xl, model, events, notes, links, pairs, officers, act, meta)
-    except PermissionError:
-        sys.exit("PVH_Intel.xlsx is open in Excel -- close it and run again.")
-    write_gephi(a.out, model, links, ring, pairs)
-    write_map(os.path.join(a.out, "PVH_Intel_Map.html"), model, links, notes, ring, pairs, meta)
-    st = Counter(P["status"] for P in pairs.values())
-    print("Records with activity: %d | links: %d | driver-vehicle: %d" % (len(act), len(links), len(pairs)))
+    state = {"snap": snap, "db": json.load(open(a.data, encoding="utf-8")), "out": a.out,
+             "xl": os.path.join(a.out, "PVH_Intel.xlsx"),
+             "meta": {"pulled": fmt_when(parse_ts(snap.get("pulled_at"))), "by": s_(snap.get("by")),
+                      "n_notes": len(snap.get("notes", [])), "n_stops": len(snap.get("checks", [])),
+                      "n_queries": len(snap.get("queries", []))}}
+    note = rebuild(state)
+    if state["n_edits"]:
+        print("Decisions read from the workbook: %d (saved to %s)" % (state["n_edits"], REVIEW_FILE))
+    if note:
+        print("  " + note)
+    pairs = state["pairs"]
+    st = Counter(P["status"] for P in pairs.values() if P["kind"] == "drives")
+    sa = Counter(P["status"] for P in pairs.values() if P["kind"] == "assoc")
+    print("Records with activity: %d | links: %d | driver-vehicle: %d | associations: %d" % (
+        len(state["act"]), len(state["links"]), sum(st.values()), sum(sa.values())))
     print("  open leads: %d  (NOT ON FILE %d, follow up %d, reopened %d)" % (
         sum(st[k] for k in OPEN), st["NOT ON FILE"], st["Follow up"], st["Reopened"]))
-    print("  company driver: %d | reviewed: %d | on file: %d" % (
-        st["Company driver"], st["Authorized driver"] + st["False link"], st["On file"]))
+    print("  company driver: %d | confirmed: %d | your links: %d | removed: %d | on file: %d" % (
+        st["Company driver"], st["Confirmed"] + sa["Confirmed"], st["My link"] + sa["My link"],
+        st["Removed"] + sa["Removed"], st["On file"]))
     print("Written to " + a.out)
+    if not a.no_map:
+        serve(state, a.port, not a.no_browser)
 
 
 if __name__ == "__main__":
