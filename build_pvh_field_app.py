@@ -138,9 +138,9 @@ def clean_value(v):
 #
 # The column names mean exactly what they say. An earlier version of this
 # build had the two swapped, which showed vehicles as PVH-expired in the
-# field when only their NS permit had lapsed. Verified 2026-08-24 against
-# a live record: Expiry Date 01/31/2027, NSVehicle Permit
-# Expiry 07/31/2026 -- its PVH licence is current. Do not transpose these.
+# field when only their NS permit had lapsed. Verified 2026-08-24 against a
+# live record whose Expiry Date was months ahead while its NSVehicle Permit
+# Expiry had passed -- its PVH licence was current. Do not transpose these.
 VEH_DATES = ["NSVehicle Permit Expiry", "First MVIDate", "Insurance Expiry",
              "Inspection Date", "Expiry Date"]
 OP_DATES = ["NSDLExpired Date", "Approval Date", "Renewal Date"]
@@ -240,7 +240,8 @@ def resolve_operator(name_key, street, ops_by_name, operators):
     breaks the tie; if that does not single out exactly one operator, nobody
     is linked (index None) and the candidates are returned so the app can
     say "possible match, verify" instead of guessing. Linking the first
-    operator in the file is how one vehicle ended up shown under the wrong operator.
+    operator in the file is how one vehicle ended up shown under the wrong
+    operator.
     """
     cands = ops_by_name.get(name_key, []) if name_key else []
     if len(cands) == 1:
@@ -323,8 +324,8 @@ def build_owners(vehicles, ops_by_name, operators):
     elsewhere in this file as a display-only fallback. BUT Owner ID is not
     always a clean 1:1 key: the source data has at least one confirmed
     case of the same Owner ID reused across two unrelated people (Owner ID
-    1: one person with a Limo vehicle, another with
-    five Tour vehicles). A same-ID group is therefore split further by
+    1: one person with a Limo vehicle, another with five Tour vehicles).
+    A same-ID group is therefore split further by
     normalized owner name so unrelated people never get merged onto one
     Owner card; a split logs a warning, since a reused Owner ID is a real
     source-data problem worth flagging, not cosmetic spelling drift.
