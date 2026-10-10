@@ -1,0 +1,11 @@
+#!/bin/sh
+# Blocks a commit whose message holds personal information from the PVH data.
+# See githooks/pii_check.py.
+root=$(git rev-parse --show-toplevel)
+for py in py python3 python; do
+  if command -v "$py" >/dev/null 2>&1; then
+    exec "$py" "$root/githooks/pii_check.py" message "$1"
+  fi
+done
+echo "pii check: Python not found, check skipped." >&2
+exit 0
