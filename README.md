@@ -147,7 +147,18 @@ pulls every note, stop and query, joins them to `PVH_data.json`, and writes to
 
 Links come from the records (owner -> vehicle), from notes that name another
 record (plate, licence no., "deck 211", full name), and from one officer
-touching a vehicle and a person within 15 minutes. Your email is remembered in
+touching a vehicle and a person within 15 minutes with a Stop or Note on one of
+them (a span with more than 2 vehicles or 2 people is a desk lookup and ignored). Each driver-vehicle pair is
+**On file** (registered owner), **Company driver** (same company, matched
+loosely across the hand-typed business names) or **NOT ON FILE**.
+
+To review a pair, pick a Decision (Authorized driver / False link / Follow up)
+on the Driver-Vehicle sheet, save, and run again. Decisions are kept in
+`intel/link_reviews.csv` (with a `.bak` of the previous copy) and survive every
+rebuild. An accepted link is **Reopened** when new evidence arrives that the
+review did not see: another officer's sighting, or a new note naming them.
+
+Your email is remembered in
 `pvh_local_config.json` as `intel_email`; the password is asked each run and
 never stored. `python pvh_intel.py --offline` rebuilds from the last pull.
 
