@@ -1551,12 +1551,18 @@ def rebuild(state):
     return note
 
 
-def serve(state, port=8765, browser=True):
+def serve(state, port=0, browser=True):
     """Show the map in the browser with linking turned on, until the window is
     closed. Only this PC can reach it (127.0.0.1); every change must carry the
-    one-time key that is built into the page, so no other website can make one."""
+    one-time key that is built into the page, so no other website can make one.
+
+    The port is a free one Windows picks (port=0) unless one is asked for, and
+    one already answering is never shared: Windows will otherwise let two
+    programs hold the same port, and the browser then reaches whichever it
+    likes -- another project's server, say."""
     import hmac
     import secrets
+    import socket
     import threading
     import webbrowser
     from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -1619,11 +1625,30 @@ def serve(state, port=8765, browser=True):
         def log_message(self, fmt, *args):
             pass
 
+    class Server(ThreadingHTTPServer):
+        allow_reuse_address = False
+        daemon_threads = True
+
+        def server_bind(self):
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):   # Windows: no one can take ours over
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+
+    # Windows lets this bind 127.0.0.1:port even while another program holds
+    # the same port on all addresses, so a requested port is first checked for
+    # anything already answering; the default (0) is one Windows hands out free.
+    def answering(p):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            return s.connect_ex(("127.0.0.1", p)) == 0
+
+    if port and answering(port):
+        print("Port %d is already used by another program on this PC -- using a free one instead." % port)
+        port = 0
     try:
-        httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+        httpd = Server(("127.0.0.1", port), Handler)
     except OSError:
-        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    httpd.daemon_threads = True
+        httpd = Server(("127.0.0.1", 0), Handler)
     where["port"] = httpd.server_address[1]
     url = "http://127.0.0.1:%d/" % where["port"]
     print("")
@@ -1648,7 +1673,8 @@ def main():
     ap.add_argument("--out", default=os.path.join(HERE, "intel"), help="output folder")
     ap.add_argument("--data", default=DATA_PATH, help="PVH_data.json")
     ap.add_argument("--no-map", action="store_true", help="write the files only; do not open the map for linking")
-    ap.add_argument("--port", type=int, default=8765, help="port for the linking map (this PC only)")
+    ap.add_argument("--port", type=int, default=0,
+                    help="port for the linking map (this PC only); default: a free one")
     ap.add_argument("--no-browser", action="store_true", help="serve the map but do not open a browser")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
