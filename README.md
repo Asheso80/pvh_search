@@ -66,6 +66,14 @@ To run it directly instead of via the `.bat`:
 python build_pvh_field_app.py All_Active_Vehicles.xlsx OperatorList.xlsx [addresses.xlsx] [output.html]
 ```
 
+**The daily 07:30 build** (`pull_and_build_pvh.py`, run by `pvh_daemon.py` on the
+work PC) runs the build script *as last committed*, not whatever is being edited
+in the folder: the `post-commit` hook in `githooks/` copies each committed
+version to `release/` (gitignored), and the daily run uses that copy. It also
+runs with `--data-only`, refreshing the data and leaving `docs/` and the version
+number alone -- those change only when you build on purpose. So a half-finished
+edit can sit in the folder overnight without reaching the phones.
+
 ---
 
 ## Updating the app
@@ -155,7 +163,8 @@ pulls every note, stop and query, joins them to `PVH_data.json`, and writes to
 
 - `PVH_Intel.xlsx` -- Profiles, Driver-Vehicle (NOT ON FILE flagged), Links,
   Notes, Activity (for pivots), Monthly, Officers, Hour x Weekday
-- `PVH_Intel_Map.html` -- clickable relationship map
+- `PVH_Intel_Map.html` -- clickable relationship map; works offline (the graph
+  library, `vendor/vis-network-9.1.9.min.js`, is built into the file)
 - `gephi_nodes.csv` / `gephi_edges.csv` -- Gephi *File > Import spreadsheet*
 - `PVH_Intel.graphml` -- Gephi, Cytoscape, yEd, Neo4j
 

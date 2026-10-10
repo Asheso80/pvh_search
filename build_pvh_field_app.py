@@ -32,11 +32,17 @@ import datetime
 from collections import Counter
 import pandas as pd
 
-VEH_FILE = sys.argv[1] if len(sys.argv) > 1 else "All_Active_Vehicles.xlsx"
-OP_FILE = sys.argv[2] if len(sys.argv) > 2 else "PVH_ALL_Operators.xlsx"
+# --data-only is the unattended 07:30 run (pull_and_build_pvh.py). It refreshes
+# the data -- PVH_data.json and the single-file app -- and leaves the published
+# app in docs/ and the version ledger alone: those change only when a build is
+# run on purpose.
+DATA_ONLY = "--data-only" in sys.argv
+_args = [a for a in sys.argv[1:] if a != "--data-only"]
+VEH_FILE = _args[0] if len(_args) > 0 else "All_Active_Vehicles.xlsx"
+OP_FILE = _args[1] if len(_args) > 1 else "PVH_ALL_Operators.xlsx"
 ADDR_FILE = None
 OUT_FILE = "PVH_Field_App.html"
-_rest = sys.argv[3:]
+_rest = _args[2:]
 for a in _rest:
     if a.lower().endswith(".html"):
         OUT_FILE = a
@@ -421,7 +427,11 @@ def shared_config():
     access rules are what protect the data. A service_role key here would hand
     every device full control, so anything that looks like one is refused.
     """
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pvh_local_config.json")
+    # The working folder first: the 07:30 run executes the released copy of this
+    # script from release/, while the config stays in the project folder.
+    path = "pvh_local_config.json"
+    if not os.path.exists(path):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pvh_local_config.json")
     try:
         with io.open(path, encoding="utf-8") as f:
             cfg = json.load(f)
@@ -455,6 +465,28 @@ def shared_config():
                  "must never reach a device. Use the anon / publishable key.")
     print("Shared notes: ON (" + url + ")")
     return {"url": url, "key": key}
+
+
+_SHARED = False  # not looked up yet
+
+
+def shared_settings():
+    global _SHARED
+    if _SHARED is False:
+        _SHARED = shared_config()
+    return _SHARED
+
+
+def shared_pin():
+    """Fingerprint of the shared-notes address, built into the published app.
+
+    The data file names the server officers sign in to. The app refuses to send
+    a password or token to any address whose fingerprint does not match this,
+    so a swapped data file or a bogus pasted link cannot collect sign-ins. A
+    fingerprint rather than the address keeps the project out of the public repo.
+    """
+    s = shared_settings()
+    return hashlib.sha256(s["url"].encode("utf-8")).hexdigest() if s else ""
 
 
 def main():
@@ -532,7 +564,7 @@ def main():
         "operators": operators,
         "owners": owners,
     }
-    shared = shared_config()
+    shared = shared_settings()
     if shared:
         data["shared"] = shared
     payload_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
@@ -543,13 +575,18 @@ def main():
             .replace("__HEAD_EXTRA__", "")
             .replace("__DATA_SCRIPT__", '<script id="data" type="application/json">' + payload + "</script>")
             .replace("__BOOT__", SINGLE_BOOT)
+            .replace("__SHPIN__", shared_pin())
             .replace("__APPVER__", shell_version()[0]))
     write_out(OUT_FILE, html)
     kb = len(html.encode("utf-8")) // 1024
     addr_src = ADDR_FILE.split("/")[-1] if ADDR_FILE else "none (owner addresses skipped)"
     print(f"Built {OUT_FILE} ({kb} KB) | vehicles: {len(vehicles)} | operators: {len(operators)} | owners: {len(owners)}")
     print(f"Sources: {VEH_FILE.split('/')[-1]} + {OP_FILE.split('/')[-1]} + {addr_src}")
-    write_shell(payload_json)
+    if DATA_ONLY:
+        write_out("PVH_data.json", payload_json)
+        print("Data written to PVH_data.json (do NOT commit) | docs/ left as published (--data-only)")
+    else:
+        write_shell(payload_json)
 
 
 def _pdate(s):
@@ -1065,7 +1102,8 @@ def shell_version():
     base = (TEMPLATE
             .replace("__HEAD_EXTRA__", SHELL_HEAD)
             .replace("__DATA_SCRIPT__", "")
-            .replace("__BOOT__", SHELL_BOOT))
+            .replace("__BOOT__", SHELL_BOOT)
+            .replace("__SHPIN__", shared_pin()))
     digest = hashlib.sha256(base.encode("utf-8")).hexdigest()[:8]
 
     try:
@@ -1076,13 +1114,15 @@ def shell_version():
         # build; a stale number is worse than an obviously fresh one.
         rec = {}
 
-    if rec.get("hash") != digest:
+    # A --data-only run never issues a number: it labels the single-file app with
+    # the published version and leaves the ledger to a deliberate build.
+    if rec.get("hash") != digest and not DATA_ONLY:
         rec = {"version": int(rec.get("version", 0)) + 1,
                "date": datetime.date.today().isoformat(),
                "hash": digest}
         write_out(VERSION_FILE, json.dumps(rec, indent=2) + "\n")
 
-    _SHELL_VER = (f"v{rec['version']} · {rec['date']}", digest)
+    _SHELL_VER = (f"v{rec.get('version', '?')} · {rec.get('date', '?')}", digest)
     return _SHELL_VER
 
 
@@ -1093,6 +1133,7 @@ def write_shell(payload_json):
                   .replace("__HEAD_EXTRA__", SHELL_HEAD)
                   .replace("__DATA_SCRIPT__", "")
                   .replace("__BOOT__", SHELL_BOOT)
+                  .replace("__SHPIN__", shared_pin())
                   .replace("__APPVER__", label))
     write_out("docs/index.html", shell_html)
     # Key the cache on the bytes actually served, not on the pre-substitution
@@ -1891,18 +1932,37 @@ function uid(){
 /* --- network. Only a signed-in user's token is ever sent as Authorization;
    the public key goes in apikey alone, which is what the newer publishable
    keys require. A reject with {net:true} means no usable connection. */
+/* The server address comes from the data file, so before any password or
+   token is sent, the installed app checks it against the fingerprint it was
+   built with (shared_pin() in the builder). A swapped data file, or a bogus
+   link pasted on a phone, cannot collect sign-ins. The single-file app has its
+   data built in with it, so there is nothing to check there. */
+var SH_PIN="__SHPIN__", SH_OK=null;
+var PIN_MSG="This data file points shared notes at a server this app does not recognise, so nothing was sent. Ask the administrator for the current data file.";
+function shVerified(){
+  if(SH_OK)return SH_OK;
+  if(!window.__SHELL__)SH_OK=Promise.resolve(true);
+  else if(!/^[0-9a-f]{64}$/.test(SH_PIN)||!(window.crypto&&crypto.subtle&&window.TextEncoder))SH_OK=Promise.resolve(false);
+  else SH_OK=crypto.subtle.digest("SHA-256",new TextEncoder().encode(SH.url)).then(function(b){
+    return Array.prototype.map.call(new Uint8Array(b),function(x){return (x+256).toString(16).slice(1);}).join("")===SH_PIN;
+  },function(){return false;});
+  return SH_OK;
+}
 function shHttp(method,path,body,token,prefer){
-  var h={"apikey":SH.key,"Content-Type":"application/json"};
-  if(token)h.Authorization="Bearer "+token;
-  if(prefer)h.Prefer=prefer;
-  return fetch(SH.url+path,{method:method,headers:h,cache:"no-store",
-      body:body==null?undefined:JSON.stringify(body)})
-    .then(function(r){
-      return r.text().then(function(t){
-        var j=null; try{j=t?JSON.parse(t):null;}catch(e){}
-        return {status:r.status,json:j};
-      });
-    },function(){throw {net:true};});
+  return shVerified().then(function(ok){
+    if(!ok)throw {pin:true};
+    var h={"apikey":SH.key,"Content-Type":"application/json"};
+    if(token)h.Authorization="Bearer "+token;
+    if(prefer)h.Prefer=prefer;
+    return fetch(SH.url+path,{method:method,headers:h,cache:"no-store",
+        body:body==null?undefined:JSON.stringify(body)})
+      .then(function(r){
+        return r.text().then(function(t){
+          var j=null; try{j=t?JSON.parse(t):null;}catch(e){}
+          return {status:r.status,json:j};
+        });
+      },function(){throw {net:true};});
+  });
 }
 var REFRESHING=null;
 function shRefresh(){
@@ -2068,6 +2128,7 @@ function shSync(force){
   }).catch(function(e){
     if(e&&e.auth)SYNC.err=(AU&&AU.dead)?"Signed out — sign in again to send and receive.":
       "The server refused this account. Ask the administrator.";
+    else if(e&&e.pin)SYNC.err=PIN_MSG;
     else if(e&&e.net)SYNC.err="No signal — will retry.";
     else SYNC.err=(e&&e.message)||"Sync failed.";
     scSave();
@@ -2375,7 +2436,7 @@ function renderShared(){
       AU=a; auSave(); NIDX=null; pw.value="";
       shSync(true); renderShared();
     }).catch(function(e){
-      msg.textContent=(e&&e.net)?"No connection. Signing in needs a signal.":((e&&e.message)||"Could not sign in.");
+      msg.textContent=(e&&e.pin)?PIN_MSG:(e&&e.net)?"No connection. Signing in needs a signal.":((e&&e.message)||"Could not sign in.");
     });
   }
   document.getElementById("shgo").addEventListener("click",go2);
@@ -2386,9 +2447,23 @@ function shOut(){
   var n=OB.length;
   if(!confirm(n?(n+" item"+(n===1?"":"s")+" not yet sent will be lost. Sign out anyway?"):
       "Sign out of shared notes on this device? The shared notes kept here are removed."))return;
+  var was=AU;
   AU=null; OB=[]; SC=emptySC(); NIDX=null;
   try{localStorage.removeItem(AU_KEY); localStorage.removeItem(OB_KEY); localStorage.removeItem(SC_KEY);}catch(e){}
   renderShared();
+  shEndSession(was);
+}
+/* Signing out also ends the session on the server (this device's only, not
+   the officer's other devices), so a copy of the sign-in taken from the phone
+   stops working. Best effort: with no signal it ends on the device alone. */
+function shEndSession(a){
+  if(!a||!a.refresh)return;
+  var live=(a.exp||0)-60>Date.now()/1000;
+  (live?Promise.resolve(a.access):
+    shHttp("POST","/auth/v1/token?grant_type=refresh_token",{refresh_token:a.refresh})
+      .then(function(r){return r.json&&r.json.access_token;}))
+  .then(function(tok){if(tok)return shHttp("POST","/auth/v1/logout?scope=local",null,tok);})
+  .catch(function(){});
 }
 function shDiscard(){
   OB=OB.filter(function(o){return !o.failed;}); obSave(); renderShared();
@@ -3217,6 +3292,10 @@ q.addEventListener("input",()=>{
   LIM={};
   clr.style.display=q.value?"block":"none";
   if(location.hash && location.hash!=="#/") history.replaceState(null,"","#/");
+  /* Searching leaves the record page, so opening the same record again from
+     the results is a new visit (and a new query) -- route() must not mistake
+     it for a redraw of the page it last drew. */
+  ROUTE_LAST=null;
   renderHome(q.value);
 });
 clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();renderHome("");});

@@ -5,9 +5,11 @@ pull_and_build_pvh.py
 Refreshes the PVH Field Lookup data pipeline in one step:
   1. Pulls the taxi reports from SSRS as Excel, using your Windows login
      (Integrated Auth -- no password stored).
-  2. Runs build_pvh_field_app.py to regenerate PVH_data.json,
-     PVH_Field_App.html, and docs/ -- same as double-clicking
-     Build_PVH_App.bat, just without the manual export/download step first.
+  2. Runs the build to regenerate PVH_data.json and PVH_Field_App.html.
+     It runs the build script as last committed (release/, kept current by
+     the post-commit hook in githooks/), not whatever is being edited in the
+     folder, and with --data-only, so the published app in docs/ only changes
+     when a build is run on purpose.
   3. Copies PVH_data.json to your Dropbox folder, overwriting the existing
      copy so the shared link stays current.
 
@@ -55,6 +57,7 @@ except ImportError:
 # --------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent  # PVH_Search folder
 BUILD_SCRIPT = SCRIPT_DIR / "build_pvh_field_app.py"
+RELEASE_SCRIPT = SCRIPT_DIR / "release" / "build_pvh_field_app.py"
 LOG_DIR = SCRIPT_DIR / "logs"
 CONFIG_FILE = SCRIPT_DIR / "pvh_local_config.json"
 
@@ -202,12 +205,26 @@ def main():
         f"doesn't read it -- only {', '.join(consumed)} feed the build."
     )
 
-    log.info("Rebuilding PVH_data.json / PVH_Field_App.html / docs/ ...")
+    # This run is unattended and its output goes straight to every phone, so it
+    # uses the build script as last committed, never a half-finished edit.
+    if RELEASE_SCRIPT.exists():
+        build = RELEASE_SCRIPT
+        try:
+            stamp = (RELEASE_SCRIPT.parent / "RELEASED_FROM.txt").read_text(encoding="utf-8").strip()
+        except OSError:
+            stamp = "commit not recorded"
+        log.info(f"Using the last committed build script ({stamp})")
+    else:
+        build = BUILD_SCRIPT
+        log.warning("release/build_pvh_field_app.py not found -- using the build script "
+                    "in the folder, which may include uncommitted edits.")
+    log.info("Rebuilding PVH_data.json / PVH_Field_App.html ...")
     result = subprocess.run(
         [
-            sys.executable, str(BUILD_SCRIPT),
+            sys.executable, str(build),
             "All_Active_Vehicles.xlsx", "OperatorList.xlsx",
             "All_Vehicle_LastInspection.xlsx", "PVH_Field_App.html",
+            "--data-only",
         ],
         cwd=str(SCRIPT_DIR),
         capture_output=True, text=True,
@@ -232,7 +249,7 @@ def main():
                    "shared Dropbox link was NOT updated this run.")
         sys.exit(1)
 
-    log.info("=== Done. PVH_data.json, PVH_Field_App.html, docs/, and the Dropbox copy are all current. ===")
+    log.info("=== Done. PVH_data.json, PVH_Field_App.html and the Dropbox copy are all current. ===")
 
 
 if __name__ == "__main__":

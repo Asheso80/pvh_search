@@ -1,2 +1,4 @@
 # The git hooks are run by sh, which cannot read Windows line endings.
 githooks/* text eol=lf
+# The bundled map library is kept byte-for-byte as released.
+vendor/* -text

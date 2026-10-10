@@ -42,6 +42,19 @@ on conflict (id) do update set display_name = excluded.display_name;
 To remove someone's access, delete their row from `profiles` (they can still
 sign in but see nothing), or delete the user.
 
+## Upgrading an existing project: time guards
+
+Run `supabase/004_time_guards.sql` once in the SQL editor. It is safe to run
+again, and a fresh project does not need it: `schema.sql` already includes it.
+
+The phone says when a note, stop or query was written, because something
+written with no signal is sent later and should keep its time. The database
+now holds that time to the 72 hours before it arrives -- no later than "now",
+no earlier than three days back -- and the time a note is marked done gets the
+same rule. A time outside the window is moved to the nearest edge rather than
+refused, so nothing is lost; the server's own receive time is still recorded
+alongside and cannot be set from the app. No app update is needed.
+
 ## Upgrading an existing project: shared "Queried" log
 
 If the project was set up before the Queried log existed, run
