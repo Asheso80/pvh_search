@@ -4,6 +4,8 @@ REM  PVH intel export - notes, stops and queries from Supabase,
 REM  linked to the PVH records.
 REM  Double-click it. You will be asked for your Supabase password
 REM  (it is not saved). Output: intel\ (keep it on this PC).
+REM  The map then opens in your browser for making and removing
+REM  links; close this window when you are done.
 REM  Run the app build first so PVH_data.json is current.
 REM ============================================================
 

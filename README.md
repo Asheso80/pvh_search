@@ -161,25 +161,44 @@ records. Signing out removes it.
 pulls every note, stop and query, joins them to `PVH_data.json`, and writes to
 `intel/` (gitignored -- personal information; keep it on the PC):
 
-- `PVH_Intel.xlsx` -- Profiles, Driver-Vehicle (NOT ON FILE flagged), Links,
-  Notes, Activity (for pivots), Monthly, Officers, Hour x Weekday
-- `PVH_Intel_Map.html` -- clickable relationship map; works offline (the graph
-  library, `vendor/vis-network-9.1.9.min.js`, is built into the file)
+- `PVH_Intel.xlsx` -- **Who drives what** (every vehicle in deck order: owner,
+  confirmed drivers, drivers seen that need a look), **People** (what each person
+  owns and drives, who they drive for, who drives for them, who they are
+  associated with), Driver-Vehicle, Associations, Profiles, Links, Notes,
+  Activity (for pivots), Monthly, Officers, Hour x Weekday
+- `PVH_Intel_Map.html` -- the relationship map, view only; works offline (the
+  graph library, `vendor/vis-network-9.1.9.min.js`, is built into the file)
+- `link_reviews.csv` -- your links and decisions (see below)
 - `gephi_nodes.csv` / `gephi_edges.csv` -- Gephi *File > Import spreadsheet*
 - `PVH_Intel.graphml` -- Gephi, Cytoscape, yEd, Neo4j
+
+Vehicles read **Deck · owner · plate · description** everywhere.
 
 Links come from the records (owner -> vehicle), from notes that name another
 record (plate, licence no., "deck 211", full name), and from one officer
 touching a vehicle and a person within 15 minutes with a Stop or Note on one of
 them (a span with more than 2 vehicles or 2 people is a desk lookup and ignored). Each driver-vehicle pair is
 **On file** (registered owner), **Company driver** (same company, matched
-loosely across the hand-typed business names) or **NOT ON FILE**.
+loosely across the hand-typed business names) or **NOT ON FILE**; two people
+named together in a note are **Seen together**.
 
-To review a pair, pick a Decision (Authorized driver / False link / Follow up)
-on the Driver-Vehicle sheet, save, and run again. Decisions are kept in
-`intel/link_reviews.csv` (with a `.bak` of the previous copy) and survive every
-rebuild. An accepted link is **Reopened** when new evidence arrives that the
-review did not see: another officer's sighting, or a new note naming them.
+**Making and removing links.** After the files are written, the map opens in
+your browser, served from this PC only (`127.0.0.1`). Click a person or vehicle,
+then **Link to…** and the other record (or find it with the search box, which
+covers every record in the data) to say a person **drives** a vehicle or two
+people are **associated**. Click a line to **Confirm**, **Follow up**, **Remove**
+or **Restore** it, with a comment. Each change is saved at once and the
+workbook and map files are rebuilt; close the console window when done. The
+`PVH_Intel_Map.html` file opened on its own only views. `--no-map` builds the
+files without opening the map.
+
+Decisions can also be picked on the Driver-Vehicle and Associations sheets
+(save, then run again). Everything is kept in `intel/link_reviews.csv` (with a
+`.bak` of the previous copy) and survives every rebuild; a confirmed or removed
+link is **Reopened** when new evidence arrives that the decision did not see:
+another officer's sighting, or a new note naming them. The file uses the same
+record keys as the app's shared notes, so it can be shared or loaded into the
+shared database later as it is.
 
 Your email is remembered in
 `pvh_local_config.json` as `intel_email`; the password is asked each run and
