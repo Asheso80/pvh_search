@@ -79,6 +79,28 @@ def alnum(s):
     return re.sub(r"[^A-Z0-9]", "", s_(s).upper())
 
 
+# Notes and record labels are typed by officers, so text that a spreadsheet
+# would read as a formula is kept as text. In the workbook the cell is typed
+# as text; in a CSV it gets a leading apostrophe, which Excel hides and which
+# load_reviews() takes off again.
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def as_text(cells):
+    """openpyxl stores any string starting with "=" as a live formula."""
+    for c in cells:
+        if isinstance(c.value, str) and c.value.startswith("="):
+            c.data_type = "s"
+
+
+def csv_cell(v):
+    return "'" + v if isinstance(v, str) and v.startswith(FORMULA_START) else v
+
+
+def csv_uncell(v):
+    return v[1:] if isinstance(v, str) and v.startswith("'") and v[1:].startswith(FORMULA_START) else v
+
+
 # ------------------------------------------------------------------ companies
 # Business names in the source are typed by hand: "CITY WIDE TAXI LTD - TOUR
 # OPERATOR", "CITYWIDE TAXI", "OVER SEAS TAXI INC", "SIVLERSTAR LIMOUSINE",
@@ -480,7 +502,8 @@ def load_reviews(dir_):
     if not os.path.exists(p):
         return {}
     with open(p, newline="", encoding="utf-8-sig") as f:
-        return {r["link_id"]: r for r in csv.DictReader(f) if r.get("link_id")}
+        rows = [{k: csv_uncell(v) for k, v in r.items()} for r in csv.DictReader(f)]
+        return {r["link_id"]: r for r in rows if r.get("link_id")}
 
 
 def save_reviews(dir_, reviews):
@@ -493,7 +516,7 @@ def save_reviews(dir_, reviews):
         w = csv.DictWriter(f, fieldnames=REVIEW_COLS, extrasaction="ignore")
         w.writeheader()
         for k in sorted(reviews):
-            w.writerow(reviews[k])
+            w.writerow({c: csv_cell(v) for c, v in reviews[k].items()})
 
 
 def harvest_edits(xlsx_path):
@@ -615,6 +638,7 @@ def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
             c.font, c.fill = head, fill
         for r in rows:
             ws.append(r)
+            as_text(ws[ws.max_row])
         ws.freeze_panes = "A2"
         if rows:
             ws.auto_filter.ref = ws.dimensions
@@ -842,16 +866,17 @@ def write_gephi(dir_, model, links, ring, pairs):
         w = csv.writer(f)
         w.writerow(["Id", "Label", "Category", "Licence", "Plate", "Deck", "Company", "Notes", "Stops", "Queries", "InCurrentData"])
         for n in nodes:
-            w.writerow([n["id"], n["label"], n["type"], n["licence"], n["plate"], n["deck"], n["company"],
-                        n["notes"], n["stops"], n["queries"], n["in_data"]])
+            w.writerow([csv_cell(v) for v in (n["id"], n["label"], n["type"], n["licence"], n["plate"], n["deck"],
+                                              n["company"], n["notes"], n["stops"], n["queries"], n["in_data"])])
     with open(os.path.join(dir_, "gephi_edges.csv"), "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         # Gephi reads "Type" as Directed/Undirected, so the link kind goes in Relation.
         w.writerow(["Source", "Target", "Type", "Weight", "Relation", "Status", "OpenLead", "First", "Last"])
         for e in edges:
-            w.writerow([e["source"], e["target"], "Undirected", e["count"], e["relation"], e["status"],
-                        "yes" if e["open"] else "",
-                        e["first"].isoformat() if e["first"] else "", e["last"].isoformat() if e["last"] else ""])
+            w.writerow([csv_cell(v) for v in (e["source"], e["target"], "Undirected", e["count"], e["relation"],
+                                              e["status"], "yes" if e["open"] else "",
+                                              e["first"].isoformat() if e["first"] else "",
+                                              e["last"].isoformat() if e["last"] else "")])
     from xml.sax.saxutils import escape as x
     na = [("label", "string"), ("category", "string"), ("licence", "string"), ("plate", "string"), ("company", "string"),
           ("notes", "int"), ("stops", "int"), ("queries", "int")]
@@ -894,14 +919,36 @@ def write_map(path, model, links, notes, ring, pairs, meta):
         data["edges"].append({"from": e["source"], "to": e["target"], "rel": e["relation"], "c": e["count"],
                               "st": e["status"], "open": e["open"], "cm": e.get("comment", ""),
                               "ev": [[fmt_when(v.get("when")), v.get("officer", ""), v.get("how", ""), v.get("text", "")[:300]] for v in e["evidence"][:10]]})
-    html = MAP_HTML.replace("__DATA__", json.dumps(data).replace("</", "<\\/"))
+    head, rest = MAP_HTML.split("__VISLIB__")
+    mid, tail = rest.split("__DATA__")
+    html = head + vis_script() + mid + json.dumps(data).replace("</", "<\\/") + tail
     open(path, "w", encoding="utf-8").write(html)
+
+
+# The graph library is built into the map file, so the map opens offline and
+# nothing on a third-party server runs inside a page that holds the intel. The
+# copy in vendor/ is the official 9.1.9 release (byte-identical on cdnjs and
+# npm, matching cdnjs's published hash). Without it, the CDN copy is used with
+# that hash pinned, so the browser refuses anything that is not that file.
+VIS_FILE = os.path.join(HERE, "vendor", "vis-network-9.1.9.min.js")
+VIS_CDN = "https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"
+VIS_SRI = "sha512-iTgTmIgxyA2YehKNVbzLJx4j9SnuC5ihtRrtxVkXH/9nF3vXBN5YeNQp+6wufBWKD3u+roHVNOvWBMufQnBbug=="
+
+
+def vis_script():
+    try:
+        with open(VIS_FILE, encoding="utf-8") as f:
+            lib = f.read()
+    except OSError:
+        print("  vendor/vis-network-9.1.9.min.js not found -- the map will load the library online.")
+        return '<script src="%s" integrity="%s" crossorigin="anonymous"></script>' % (VIS_CDN, VIS_SRI)
+    return "<script>\n" + re.sub(r"</(script)", r"<\\/\1", lib, flags=re.I) + "\n</script>"
 
 
 MAP_HTML = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PVH Intel Map</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+__VISLIB__
 <style>
 :root{--bg:#f4f6f9;--panel:#fff;--line:#d8dee6;--text:#1b2430;--dim:#5b6675;--accent:#0a62c6;--bad:#c42b2b}
 @media (prefers-color-scheme:dark){:root{--bg:#10151c;--panel:#18202a;--line:#2b3542;--text:#e6ebf1;--dim:#93a0b0;--accent:#5faeff;--bad:#ff6363}}
@@ -965,7 +1012,7 @@ function side(id){const n=byId[id];if(!n)return;
   let h='<h2>'+esc(n.label)+'</h2><div class="k">'+esc(n.type)+(n.lic?' · '+esc(n.lic):'')+(n.co?' · '+esc(n.co):'')+(n.in?'':' · <span class="nof">not in current data</span>')+'</div>'+
     '<div class="k">'+n.n+' notes · '+n.s+' stops · '+n.q+' queries</div>';
   h+='<div class="sec">Links ('+ls.length+')</div>'+ls.map(([e,i])=>{const o=byId[e.from===id?e.to:e.from];
-    return '<div class="it"><a onclick="pick(\''+esc(o.id).replace(/'/g,"\\'")+'\')">'+esc(o.label)+'</a> <span class="k">'+esc(e.rel)+(e.c>1?' ×'+e.c:'')+'</span>'+(e.st?' <span class="'+(e.open?'nof':'k')+'">'+esc(e.st)+flag(e)+'</span>':'')+(e.cm?'<span class="k">Your comment: '+esc(e.cm)+'</span>':'')+
+    return '<div class="it"><a data-pick="'+esc(o.id)+'">'+esc(o.label)+'</a> <span class="k">'+esc(e.rel)+(e.c>1?' ×'+e.c:'')+'</span>'+(e.st?' <span class="'+(e.open?'nof':'k')+'">'+esc(e.st)+flag(e)+'</span>':'')+(e.cm?'<span class="k">Your comment: '+esc(e.cm)+'</span>':'')+
       e.ev.map(v=>'<span class="k">'+esc(v[0])+' · '+esc(v[1])+' · '+esc(v[2])+(v[3]?' — '+esc(v[3]):'')+'</span>').join("")+'</div>';}).join("");
   if(n.notes.length)h+='<div class="sec">Notes</div>'+n.notes.map(x=>'<div class="it"><span class="k">'+esc(x.w)+' · '+esc(x.o)+'</span>'+esc(x.b)+'</div>').join("");
   if(n.ev.length)h+='<div class="sec">Activity</div>'+n.ev.map(x=>'<div class="it"><b>'+esc(x[0])+'</b> '+esc(x[1])+' · '+esc(x[2])+'</div>').join("");
@@ -973,6 +1020,9 @@ function side(id){const n=byId[id];if(!n)return;
 function pick(id){const d=byId[id];if(d&&!show[d.type]){show[d.type]=true;document.querySelector('[data-t="'+d.type+'"]').checked=true;view.refresh();}
   net.selectNodes([id]);net.focus(id,{scale:1.3,animation:true});side(id);}
 net.on("click",p=>{if(p.nodes.length)side(p.nodes[0]);else if(p.edges.length){const e=D.edges[p.edges[0]];side(e.from);}});
+/* Record ids come from the shared database, so a link carries its id as plain
+   data and is never pasted into code. */
+document.getElementById("side").addEventListener("click",e=>{const a=e.target.closest("[data-pick]");if(a)pick(a.dataset.pick);});
 </script></body></html>
 """
 

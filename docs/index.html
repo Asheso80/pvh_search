@@ -397,7 +397,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v27 · 2026-10-10";
+var APP_VERSION="v28 · 2026-10-10";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 /* The record counts are on the home screen; the header keeps to one line. */
@@ -778,18 +778,37 @@ function uid(){
 /* --- network. Only a signed-in user's token is ever sent as Authorization;
    the public key goes in apikey alone, which is what the newer publishable
    keys require. A reject with {net:true} means no usable connection. */
+/* The server address comes from the data file, so before any password or
+   token is sent, the installed app checks it against the fingerprint it was
+   built with (shared_pin() in the builder). A swapped data file, or a bogus
+   link pasted on a phone, cannot collect sign-ins. The single-file app has its
+   data built in with it, so there is nothing to check there. */
+var SH_PIN="b4370871cb58c7585f6145a6647f18bf146d04266b9cda95bf2bf40f13776fc1", SH_OK=null;
+var PIN_MSG="This data file points shared notes at a server this app does not recognise, so nothing was sent. Ask the administrator for the current data file.";
+function shVerified(){
+  if(SH_OK)return SH_OK;
+  if(!window.__SHELL__)SH_OK=Promise.resolve(true);
+  else if(!/^[0-9a-f]{64}$/.test(SH_PIN)||!(window.crypto&&crypto.subtle&&window.TextEncoder))SH_OK=Promise.resolve(false);
+  else SH_OK=crypto.subtle.digest("SHA-256",new TextEncoder().encode(SH.url)).then(function(b){
+    return Array.prototype.map.call(new Uint8Array(b),function(x){return (x+256).toString(16).slice(1);}).join("")===SH_PIN;
+  },function(){return false;});
+  return SH_OK;
+}
 function shHttp(method,path,body,token,prefer){
-  var h={"apikey":SH.key,"Content-Type":"application/json"};
-  if(token)h.Authorization="Bearer "+token;
-  if(prefer)h.Prefer=prefer;
-  return fetch(SH.url+path,{method:method,headers:h,cache:"no-store",
-      body:body==null?undefined:JSON.stringify(body)})
-    .then(function(r){
-      return r.text().then(function(t){
-        var j=null; try{j=t?JSON.parse(t):null;}catch(e){}
-        return {status:r.status,json:j};
-      });
-    },function(){throw {net:true};});
+  return shVerified().then(function(ok){
+    if(!ok)throw {pin:true};
+    var h={"apikey":SH.key,"Content-Type":"application/json"};
+    if(token)h.Authorization="Bearer "+token;
+    if(prefer)h.Prefer=prefer;
+    return fetch(SH.url+path,{method:method,headers:h,cache:"no-store",
+        body:body==null?undefined:JSON.stringify(body)})
+      .then(function(r){
+        return r.text().then(function(t){
+          var j=null; try{j=t?JSON.parse(t):null;}catch(e){}
+          return {status:r.status,json:j};
+        });
+      },function(){throw {net:true};});
+  });
 }
 var REFRESHING=null;
 function shRefresh(){
@@ -955,6 +974,7 @@ function shSync(force){
   }).catch(function(e){
     if(e&&e.auth)SYNC.err=(AU&&AU.dead)?"Signed out — sign in again to send and receive.":
       "The server refused this account. Ask the administrator.";
+    else if(e&&e.pin)SYNC.err=PIN_MSG;
     else if(e&&e.net)SYNC.err="No signal — will retry.";
     else SYNC.err=(e&&e.message)||"Sync failed.";
     scSave();
@@ -1262,7 +1282,7 @@ function renderShared(){
       AU=a; auSave(); NIDX=null; pw.value="";
       shSync(true); renderShared();
     }).catch(function(e){
-      msg.textContent=(e&&e.net)?"No connection. Signing in needs a signal.":((e&&e.message)||"Could not sign in.");
+      msg.textContent=(e&&e.pin)?PIN_MSG:(e&&e.net)?"No connection. Signing in needs a signal.":((e&&e.message)||"Could not sign in.");
     });
   }
   document.getElementById("shgo").addEventListener("click",go2);
@@ -1273,9 +1293,23 @@ function shOut(){
   var n=OB.length;
   if(!confirm(n?(n+" item"+(n===1?"":"s")+" not yet sent will be lost. Sign out anyway?"):
       "Sign out of shared notes on this device? The shared notes kept here are removed."))return;
+  var was=AU;
   AU=null; OB=[]; SC=emptySC(); NIDX=null;
   try{localStorage.removeItem(AU_KEY); localStorage.removeItem(OB_KEY); localStorage.removeItem(SC_KEY);}catch(e){}
   renderShared();
+  shEndSession(was);
+}
+/* Signing out also ends the session on the server (this device's only, not
+   the officer's other devices), so a copy of the sign-in taken from the phone
+   stops working. Best effort: with no signal it ends on the device alone. */
+function shEndSession(a){
+  if(!a||!a.refresh)return;
+  var live=(a.exp||0)-60>Date.now()/1000;
+  (live?Promise.resolve(a.access):
+    shHttp("POST","/auth/v1/token?grant_type=refresh_token",{refresh_token:a.refresh})
+      .then(function(r){return r.json&&r.json.access_token;}))
+  .then(function(tok){if(tok)return shHttp("POST","/auth/v1/logout?scope=local",null,tok);})
+  .catch(function(){});
 }
 function shDiscard(){
   OB=OB.filter(function(o){return !o.failed;}); obSave(); renderShared();
@@ -2104,6 +2138,10 @@ q.addEventListener("input",()=>{
   LIM={};
   clr.style.display=q.value?"block":"none";
   if(location.hash && location.hash!=="#/") history.replaceState(null,"","#/");
+  /* Searching leaves the record page, so opening the same record again from
+     the results is a new visit (and a new query) -- route() must not mistake
+     it for a redraw of the page it last drew. */
+  ROUTE_LAST=null;
   renderHome(q.value);
 });
 clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();renderHome("");});

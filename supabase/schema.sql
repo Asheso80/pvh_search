@@ -5,7 +5,10 @@
 -- account (or a sign-up that slipped through) sees nothing.
 --
 -- Authorship and timestamps are set by the database, not the app, so an
--- officer cannot post as someone else or back-date a note beyond "now".
+-- officer cannot post as someone else. The time a note, stop or query was
+-- written comes from the phone (it may have been written with no signal) and
+-- is held to the 72 hours before the server receives it -- never later, never
+-- earlier -- see 004_time_guards.sql.
 
 -- ---------------------------------------------------------------- profiles
 create table if not exists public.profiles (
@@ -97,7 +100,7 @@ begin
     new.author_name := who;
     new.created_at  := now();
     new.updated_at  := now();
-    new.written_at  := least(coalesce(new.written_at, now()), now());
+    new.written_at  := least(greatest(coalesce(new.written_at, now()), now() - interval '72 hours'), now());
     new.done_at     := null;
     new.done_by     := null;
     new.edited_at   := null;
@@ -113,8 +116,13 @@ begin
       raise exception 'That part of a note cannot be changed';
     end if;
 
-    -- The done flag: anyone signed in may tick or reopen it.
+    -- The done flag: anyone signed in may tick or reopen it. The time it was
+    -- ticked comes from the phone (it may have been ticked with no signal) but
+    -- is held to the same 72-hour window as everything else.
     if new.done_at is distinct from old.done_at then
+      if new.done_at is not null then
+        new.done_at := least(greatest(new.done_at, now() - interval '72 hours'), now());
+      end if;
       new.done_by := case when new.done_at is not null then who else null end;
     else
       new.done_by := old.done_by;
@@ -189,7 +197,7 @@ begin
   new.author_id   := auth.uid();
   new.author_name := coalesce(who, '');
   new.created_at  := now();
-  new.written_at  := least(coalesce(new.written_at, now()), now());
+  new.written_at  := least(greatest(coalesce(new.written_at, now()), now() - interval '72 hours'), now());
   return new;
 end $$;
 drop trigger if exists checks_guard_trg on public.checks;
@@ -225,7 +233,7 @@ begin
   new.author_id   := auth.uid();
   new.author_name := coalesce(who, '');
   new.created_at  := now();
-  new.written_at  := least(coalesce(new.written_at, now()), now());
+  new.written_at  := least(greatest(coalesce(new.written_at, now()), now() - interval '72 hours'), now());
   return new;
 end $$;
 drop trigger if exists queries_guard_trg on public.queries;

@@ -27,3 +27,7 @@ pvh_local_config.json
 
 # Stray temp files from an interrupted atomic write.
 ._pvh_*.tmp
+
+# Last committed build script, written by githooks/post-commit for the
+# unattended 07:30 build (pull_and_build_pvh.py). Not source -- never commit.
+release/

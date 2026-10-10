@@ -1,0 +1,20 @@
+#!/bin/sh
+# Keeps release/build_pvh_field_app.py equal to the last committed build
+# script. The unattended 07:30 build runs that copy (see pull_and_build_pvh.py),
+# so an edit left half-finished in the folder never reaches the phones.
+root=$(git rev-parse --show-toplevel)
+dir="$root/release"
+mkdir -p "$dir"
+tmp="$dir/.build_pvh_field_app.py.tmp"
+if git show HEAD:build_pvh_field_app.py > "$tmp" 2>/dev/null; then
+  if cmp -s "$tmp" "$dir/build_pvh_field_app.py"; then
+    rm -f "$tmp"
+  else
+    mv -f "$tmp" "$dir/build_pvh_field_app.py"
+    git log -1 --format='%h, committed %ad' --date=format:'%Y-%m-%d %H:%M' > "$dir/RELEASED_FROM.txt"
+    echo "release/build_pvh_field_app.py updated for the 07:30 build."
+  fi
+else
+  rm -f "$tmp"
+fi
+exit 0
