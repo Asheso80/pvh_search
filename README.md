@@ -20,6 +20,20 @@ Two things get built from the same source:
 committed.** `.gitignore` blocks `PVH_data.json`, `PVH_Field_App.html` and `*.xlsx`,
 but treat that as a backstop, not the rule.
 
+A commit check backs it up. The hooks in `githooks/` refuse a commit that adds a
+person's full name, a licence number, plate, VIN, master number, phone number or
+street address from the current `PVH_data.json` -- in a file or in the commit
+message -- or that force-adds the data, exports, intel output or local config.
+Turn it on once per copy of the repo:
+
+```
+git config core.hooksPath githooks
+```
+
+`python githooks/pii_check.py all` checks everything already committed. A first
+name or surname on its own is not caught, so keep examples in comments made up.
+A false alarm can be overridden with `git commit --no-verify`.
+
 `docs/` is the only part of this repo that is published, and it contains no records. It does hold `geo.bin`, the public NS Civic Address File for CBRM (roads and civic addresses) used by the location sheet, licensed under the Open Government Licence - Nova Scotia. It is public map data, not PVH data.
 Payment, refund, SAP and criminal-check fields are dropped at build time and never
 reach the app at all.
