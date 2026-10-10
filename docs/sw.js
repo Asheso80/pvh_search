@@ -5,7 +5,9 @@ self.addEventListener("install",e=>{e.waitUntil(Promise.all([
   caches.open(C).then(c=>c.addAll(["./","index.html","manifest.webmanifest","icon-192.png","icon-512.png"])),
   caches.open(G).then(c=>c.match("geo.bin").then(h=>h||c.add(new Request("geo.bin",{cache:"reload"})))).catch(()=>{})
 ]).then(()=>self.skipWaiting()))});
-self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==C&&x!==G).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
+/* Other apps share this github.io address and its cache storage, so only this
+   app's own old caches (pvh-...) are cleared -- never another app's. */
+self.addEventListener("activate",e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x.startsWith("pvh-")&&x!==C&&x!==G).map(x=>caches.delete(x)))).then(()=>self.clients.claim()))});
 self.addEventListener("fetch",e=>{
   if(e.request.method!=="GET")return;
   const u=new URL(e.request.url);
