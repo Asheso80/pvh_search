@@ -460,6 +460,11 @@ def shared_config():
 def main():
     vehicles = load(VEH_FILE, "Vehicle Type", VEH_FIELDS, VEH_DATES)
     operators = load(OP_FILE, "Operator Type", OP_FIELDS, OP_DATES)
+    # Make and model are separated by "/" in the source, but by "\" on a few
+    # rows; show them all the same way.
+    for v in vehicles:
+        if isinstance(v.get("Make Model"), str):
+            v["Make Model"] = re.sub(r"\s*\\\s*", "/", v["Make Model"])
     # Collapse duplicate operator rows (same person across licence renewals /
     # stale LD records) BEFORE building name-link index arrays, so positional
     # indices stay valid. Vehicles are intentionally NOT deduped: Vehicle ID is
@@ -933,7 +938,7 @@ function dueForCheck(){
   return isNaN(t)||(Date.now()-t)>CHECK_MS;
 }
 (function start(){
-  document.body.classList.add("light");
+  if(lsGet("pvh_theme")!=="dark")document.body.classList.add("light");
   var saved=lsGet(DKEY), loaded=false;
   if(saved){
     try{boot(JSON.parse(saved));loaded=true;}
@@ -1118,7 +1123,7 @@ __HEAD_EXTRA__
 <style>
 :root{
   --bg:#12161B; --panel:#1C232C; --panel2:#242E39; --line:#37434F;
-  --text:#F2F6FA; --dim:#A9B7C6; --faint:#7A8896;
+  --text:#F2F6FA; --dim:#A9B7C6; --faint:#8B98A6;
   --accent:#5FAEFF; --ok:#43D384; --warn:#F7BE4A; --bad:#FF6363;
   --taxi:#F7BE4A; --limo:#B99BFF; --tour:#5FAEFF; --shuttle:#43D384;
   --platebg:#0D1115; --plateline:#3A4653;
@@ -1126,7 +1131,7 @@ __HEAD_EXTRA__
 }
 body.light{
   --bg:#EFF2F6; --panel:#FFFFFF; --panel2:#E7EBF0; --line:#CFD7DF;
-  --text:#131C26; --dim:#465666; --faint:#71808F;
+  --text:#131C26; --dim:#465666; --faint:#5B6774;
   --accent:#0A62C6; --ok:#0C8747; --warn:#9A6A08; --bad:#C42B2B;
   --taxi:#8F6404; --limo:#6236C9; --tour:#0A62C6; --shuttle:#0C8747;
   --platebg:#FFFFFF; --plateline:#8E9CAA;
@@ -1155,16 +1160,27 @@ header{position:sticky;top:0;z-index:10;background:var(--bg);
   align-items:center;justify-content:center;cursor:pointer}
 .navbtn:active{background:var(--panel2)}
 .navbtn[disabled]{opacity:.3;pointer-events:none}
-h1{font-size:15px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;flex:1}
+.navbtn.lbl{flex-direction:column;gap:2px;font-size:17px;line-height:1}
+.nbl{font-size:10px;font-weight:600;color:var(--dim);letter-spacing:.02em}
+/* One line for the title, never two: on a record page the back button takes
+   the room "Field" used, so the title shortens instead of wrapping. */
+h1{font-size:15px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;flex:1;
+  min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.inrec .hfield{display:none}
 h1 small{display:block;font-size:11px;font-weight:400;color:var(--faint);
-  letter-spacing:.02em;text-transform:none}
+  letter-spacing:.02em;text-transform:none;overflow:hidden;text-overflow:ellipsis}
 #searchwrap{margin-top:8px;position:relative}
 #q{width:100%;height:48px;border:1px solid var(--line);border-radius:12px;
-  background:var(--panel);color:var(--text);font-size:17px;padding:0 44px 0 14px;
+  background:var(--panel);color:var(--text);font-size:17px;padding:0 100px 0 14px;
   outline:none}
 #q:focus{border-color:var(--accent)}
-#clr{position:absolute;right:4px;top:4px;width:40px;height:40px;border:none;
+/* The app has its own clear button; hide the browser's so there is one. */
+#q::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none;display:none}
+#clr{position:absolute;right:54px;top:4px;width:40px;height:40px;border:none;
   background:none;color:var(--faint);font-size:20px;cursor:pointer;display:none}
+#kb{position:absolute;right:6px;top:6px;height:36px;min-width:46px;padding:0 6px;
+  border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+  color:var(--dim);font-size:13px;font-weight:700;letter-spacing:.04em;cursor:pointer}
 
 /* body */
 main{flex:1;padding:10px 12px 40px}
@@ -1357,6 +1373,7 @@ a.tel{color:var(--accent);text-decoration:none}
   background-repeat:no-repeat;background-position:right 11px center;background-size:11px 7px}
 .cardbadges{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
 .cardbadges .badge{padding:3px 8px;font-size:12px}
+.badge.vchip{padding:2px 7px;font-size:12px;font-weight:800;letter-spacing:.04em;border-radius:5px}
 .copybtn{display:block;width:100%;padding:13px;border-radius:12px;
   border:1px solid var(--line);background:var(--panel);color:var(--accent);
   font-size:15px;font-weight:700;margin-bottom:10px;cursor:pointer}
@@ -1441,15 +1458,16 @@ a.tel{color:var(--accent);text-decoration:none}
   <header>
     <div class="hrow">
       <button class="navbtn" id="back" onclick="history.back()" style="display:none">&#8592;</button>
-      <h1>PVH Field Lookup<small id="stamp"></small></h1>
-      <button class="navbtn" id="duebtn" title="Due date" aria-label="Due date"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></button>
-      <button class="navbtn" id="locbtn" title="Location" aria-label="Location"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg></button>
-      <button class="navbtn" id="theme" title="Toggle dark mode">&#9789;</button>
+      <h1>PVH <span class="hfield">Field </span>Lookup<small id="stamp"></small></h1>
+      <button class="navbtn lbl" id="duebtn" title="Due date" aria-label="Due date"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span class="nbl">Due</span></button>
+      <button class="navbtn lbl" id="locbtn" title="Location" aria-label="Location"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg><span class="nbl">Locate</span></button>
+      <button class="navbtn lbl" id="theme" title="Dark mode" aria-label="Dark mode"><span class="nbi" id="themeicon">&#9789;</span><span class="nbl" id="themelbl">Dark</span></button>
     </div>
     <div id="searchwrap">
       <input id="q" type="search" placeholder="Deck # / plate / name / licence&#8230;"
         autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false">
-      <button id="clr">&#10005;</button>
+      <button id="clr" aria-label="Clear search">&#10005;</button>
+      <button id="kb" type="button" aria-label="Switch to number keypad">123</button>
     </div>
   </header>
   <div id="toast" style="display:none"></div>
@@ -1493,55 +1511,72 @@ __DATA_SCRIPT__
 var APP_VERSION="__APPVER__";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
-document.getElementById("stamp").textContent =
-  "Data: " + DB.built + " \u00B7 " + DB.counts.vehicles + " vehicles \u00B7 " + DB.counts.operators +
-  " operators \u00B7 " + (DB.counts.owners||0) + " owners";
+/* The record counts are on the home screen; the header keeps to one line. */
+document.getElementById("stamp").textContent = "Data: " + DB.built;
 
 /* ---------- search index ---------- */
 const alnum = s => (s||"").toString().toUpperCase().replace(/[^A-Z0-9]/g,"");
 const lc = s => (s||"").toString().toLowerCase();
+const words = s => lc(s).split(/[^a-z0-9]+/).filter(Boolean);
 V.forEach((v,i)=>{v._i=i;
   v._deck=alnum(v["Deck No"]); v._plate=alnum(v["Plate No"]); v._vin=alnum(v["VIN"]);
-  v._name=lc(v["Owner Last Name"])+" "+lc(v["Owner First Name"]);
-  v._biz=lc(v["Business Name"]); v._lic=alnum(v["Licence No"]);});
+  v._nw=words(v["Owner Last Name"]).concat(words(v["Owner First Name"])); v._name=v._nw.join(" ");
+  v._bw=words(v["Business Name"]); v._lic=alnum(v["Licence No"]);});
 O.forEach((o,i)=>{o._i=i;
-  o._name=lc(o["Last Name"])+" "+lc(o["First Name"])+" "+lc(o["Middle"]);
-  o._biz=lc(o["Business Name"]); o._lic=alnum(o["Licence Number"]);});
+  o._nw=words(o["Last Name"]).concat(words(o["First Name"]),words(o["Middle"])); o._name=o._nw.join(" ");
+  o._bw=words(o["Business Name"]); o._lic=alnum(o["Licence Number"]);});
 W.forEach((w,i)=>{w._i=i;
-  w._name=lc(w["Owner Last Name"])+" "+lc(w["Owner First Name"]);
-  w._biz=lc(w["Business Name"]);});
+  w._nw=words(w["Owner Last Name"]).concat(words(w["Owner First Name"])); w._name=w._nw.join(" ");
+  w._bw=words(w["Business Name"]);});
 
+/* Names match word by word, in any order: every word typed has to start a
+   word of the name, so "First Last", "Last First" and "Last, First" find the
+   same people and a word cut short while typing ("manp") still counts -- but
+   one first name does not match a longer one that merely contains it. An
+   exact full name ranks above a partial one. Business names work the same
+   way, and a mix of the two ("surname company") is the last resort. */
+const startsWord=(ws,t)=>ws.some(w=>w.startsWith(t));
+function nameScore(qt,r){
+  if(qt.join("").length<2)return -1;
+  if(qt.every(t=>startsWord(r._nw,t))){
+    const exact=qt.length===r._nw.length&&qt.slice().sort().join(" ")===r._nw.slice().sort().join(" ");
+    return exact?65:60;
+  }
+  if(r._bw.length&&qt.every(t=>startsWord(r._bw,t)))return 50;
+  if(r._bw.length&&qt.every(t=>startsWord(r._nw,t)||startsWord(r._bw,t)))return 45;
+  return -1;
+}
+/* Every match is returned -- the result pages draw 25 at a time -- so a group's
+   count is the real number, and nobody past an arbitrary cut is unreachable.
+   Equal scores list alphabetically by name, then by deck. */
 function search(qRaw){
   const q=qRaw.trim(); if(q.length<2 && !/^\d$/.test(q)) return null;
-  const qa=alnum(q), ql=lc(q);
+  const qa=alnum(q), qt=words(q);
   const vres=[], ores=[], wres=[];
   for(const v of V){
-    let score=-1;
+    let score=-1, ns;
     if(qa && v._deck && v._deck===qa) score=100;
-    else if(qa && v._plate && (v._plate===qa?1:0)) score=95;
+    else if(qa && v._plate && v._plate===qa) score=95;
     else if(qa && v._plate && v._plate.startsWith(qa) && qa.length>=3) score=80;
-    else if(ql.length>=2 && v._name.includes(ql)) score=60;
-    else if(ql.length>=2 && v._biz.includes(ql)) score=50;
+    else if((ns=nameScore(qt,v))>=0) score=ns;
     else if(qa && v._lic && v._lic===qa) score=90;
     else if(qa.length>=5 && v._vin && v._vin.includes(qa)) score=70;
     else if(qa && v._deck && v._deck.startsWith(qa) && qa.length<v._deck.length) score=40;
     if(score>=0) vres.push([score,v]);
   }
   for(const o of O){
-    let score=-1;
-    if(ql.length>=2 && o._name.includes(ql)) score=60;
-    else if(ql.length>=2 && o._biz.includes(ql)) score=50;
-    else if(qa && o._lic && o._lic===qa) score=90;
+    let score=nameScore(qt,o);
+    if(score<0 && qa && o._lic && o._lic===qa) score=90;
     if(score>=0) ores.push([score,o]);
   }
   for(const w of W){
-    let score=-1;
-    if(ql.length>=2 && w._name.includes(ql)) score=60;
-    else if(ql.length>=2 && w._biz.includes(ql)) score=50;
+    const score=nameScore(qt,w);
     if(score>=0) wres.push([score,w]);
   }
-  vres.sort((a,b)=>b[0]-a[0]); ores.sort((a,b)=>b[0]-a[0]); wres.sort((a,b)=>b[0]-a[0]);
-  return {v:vres.map(x=>x[1]).slice(0,60), o:ores.map(x=>x[1]).slice(0,60), w:wres.map(x=>x[1]).slice(0,60)};
+  const byName=(a,b)=>b[0]-a[0]||a[1]._name.localeCompare(b[1]._name);
+  vres.sort((a,b)=>byName(a,b)||a[1]._deck.localeCompare(b[1]._deck,undefined,{numeric:true}));
+  ores.sort(byName); wres.sort(byName);
+  return {v:vres.map(x=>x[1]), o:ores.map(x=>x[1]), w:wres.map(x=>x[1])};
 }
 
 /* ---------- date status ---------- */
@@ -1595,12 +1630,33 @@ function opcText(c){
     c.map(j=>O[j]["Licence Number"]||"?").join(", ");
 }
 
-function vehCard(v,extra){
+/* One verdict per card, from the same dates as the record page's badges, so
+   "is this one OK?" is answered from the list without opening it. */
+function verdict(dates){
+  let exp=0, soon=0, miss=0;
+  const today=new Date().setHours(0,0,0,0);
+  dates.forEach(s=>{
+    const d=parseD(s); if(!d){miss++; return;}
+    const days=Math.floor((d-today)/864e5);
+    if(days<0)exp++; else if(days<=30)soon++;
+  });
+  if(exp)return '<span class="badge b-bad vchip">'+(exp>1?exp+' ':'')+'EXPIRED</span>';
+  if(soon)return '<span class="badge b-warn vchip">EXPIRES SOON</span>';
+  if(miss)return '<span class="badge b-na vchip">DATE MISSING</span>';
+  return '<span class="badge b-ok vchip">VALID</span>';
+}
+function vehVerdict(v){
+  return verdict([v["Expiry Date"],v["Insurance Expiry"],v["NSVehicle Permit Expiry"],addYear(v["First MVIDate"])]);
+}
+function opVerdict(o){return verdict([o["Renewal Date"],o["NSDLExpired Date"]]);}
+
+/* noVerdict: the browse list already shows each expired item with its days. */
+function vehCard(v,extra,noVerdict){
   return '<div class="card" onclick="go(\'v/'+v._i+'\')">'+deckHTML(v)+
     '<div class="cmain"><div class="cname">'+esc(v["Make Model"]||"Vehicle")+
     (v["Vehicle Color"]?' \u00B7 '+esc(v["Vehicle Color"]):'')+'</div>'+
     '<div class="csub">'+esc(ownerName(v))+(v["Business Name"]?' \u00B7 '+esc(v["Business Name"]):'')+'</div>'+
-    '<div class="crow2">'+ntChip(clKeyV(v))+'<span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span>'+
+    '<div class="crow2">'+(noVerdict?'':vehVerdict(v))+ntChip(clKeyV(v))+'<span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span>'+
     (v["Plate No"]?'<span class="plate">'+esc(v["Plate No"])+'</span>':'')+
     clChipsV(v)+
     '</div>'+(extra||'')+'</div><div class="chev">&#8250;</div></div>';
@@ -2465,7 +2521,7 @@ function opCard(o,extra){
     '<div class="opdot">'+esc(init)+'</div>'+
     '<div class="cmain"><div class="cname">'+esc(opName(o))+'</div>'+
     '<div class="csub">'+dash(o["Business Name"])+'</div>'+
-    '<div class="crow2">'+ntChip(clKey(o))+'<span class="chip t-'+esc(o["Operator Type"])+'">'+esc(o["Operator Type"])+' operator</span>'+
+    '<div class="crow2">'+(flag?'':opVerdict(o))+ntChip(clKey(o))+'<span class="chip t-'+esc(o["Operator Type"])+'">'+esc(o["Operator Type"])+' operator</span>'+
     (o["Licence Number"]?'<span class="plate">'+esc(o["Licence Number"])+'</span>':'')+
     (ownop?'<span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
     (flag?'<span class="badge b-bad">INACTIVE/CANCELLED</span>':'')+
@@ -2690,7 +2746,7 @@ function renderBrowse(){
     '<div class="fchip'+(BSORT==="owner"?" on":"")+'" onclick="setSort(\'owner\')">Owner A\u2013Z</div></div>'+
     '<div class="counts">'+list.length+' vehicle'+(list.length===1?"":"s")+
       ' \u00B7 '+(tl?tl[1]:"")+(sl&&sl[0]?" \u00B7 "+sl[1]:"")+'</div>';
-  h+=list.length?list.map(v=>vehCard(v,statBadgesInline(v))).join(""):'<div class="hint">No vehicles match this filter.</div>';
+  h+=list.length?list.map(v=>vehCard(v,statBadgesInline(v),true)).join(""):'<div class="hint">No vehicles match this filter.</div>';
   main.innerHTML=h;
   wireFilters();
 }
@@ -2764,7 +2820,7 @@ function renderVehicle(i){
   h+=ntSection("v",i,clKeyV(v));
   if(v["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(v["Notes"])+'</div>';
   if(others.length){
-    h+='<div class="seclabel">Other vehicles, same owner ('+others.length+')</div>'+others.map(vehCard).join("");
+    h+='<div class="seclabel">Other vehicles, same owner ('+others.length+')</div>'+others.map(x=>vehCard(x)).join("");
   }
   main.innerHTML=h;
 }
@@ -2812,12 +2868,12 @@ function renderOperator(i){
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Vehicles in this name ('+veh.length+')</div>';
   const sn=(o._vsn||[]).map(ix=>V[ix]).filter(Boolean);
-  h+=veh.length?veh.map(vehCard).join(""):'<div class="empty">'+(sn.length?
+  h+=veh.length?veh.map(x=>vehCard(x)).join(""):'<div class="empty">'+(sn.length?
     'None confirmed for this operator — see possible matches below.':
     'No active vehicles registered under this exact name.')+'</div>';
   const fz=(o._vfz||[]).map(ix=>V[ix]).filter(Boolean);
-  if(sn.length)h+='<div class="seclabel">Possible matches \u2014 other operators share this name, verify before relying on ('+sn.length+')</div>'+sn.map(vehCard).join("");
-  if(fz.length)h+='<div class="seclabel">Possible matches \u2014 similar name, verify before relying on ('+fz.length+')</div>'+fz.map(vehCard).join("");
+  if(sn.length)h+='<div class="seclabel">Possible matches \u2014 other operators share this name, verify before relying on ('+sn.length+')</div>'+sn.map(x=>vehCard(x)).join("");
+  if(fz.length)h+='<div class="seclabel">Possible matches \u2014 similar name, verify before relying on ('+fz.length+')</div>'+fz.map(x=>vehCard(x)).join("");
   main.innerHTML=h;
 }
 
@@ -2863,16 +2919,28 @@ function route(){
   const sp=(h==="shared"||h==="actions");
   window.scrollTo(0,0);
   document.getElementById("back").style.display=(m||sp)?"flex":"none";
+  document.body.classList.toggle("inrec",!!(m||sp));
   if(h==="shared"){ renderShared(); }
   else if(h==="actions"){ renderActions(); }
   else if(m){ if(m[1]==="v") renderVehicle(+m[2]); else if(m[1]==="o") renderOperator(+m[2]); else renderOwner(+m[2]); }
   else { renderHome(q.value); }
   FRESH=false;
 }
-document.body.classList.add("light");
+/* Light by default (it reads best outdoors); dark is remembered on this device
+   once chosen, for night shifts. The button names the mode it switches to. */
+var THEME_KEY="pvh_theme", darkMode=false;
+try{darkMode=localStorage.getItem(THEME_KEY)==="dark";}catch(e){}
+function applyTheme(){
+  document.body.classList.toggle("light",!darkMode);
+  document.getElementById("themeicon").innerHTML=darkMode?"&#9788;":"&#9789;";
+  document.getElementById("themelbl").textContent=darkMode?"Light":"Dark";
+  const t=darkMode?"Light mode":"Dark mode", b=document.getElementById("theme");
+  b.title=t; b.setAttribute("aria-label",t);
+}
+applyTheme();
 document.getElementById("theme").addEventListener("click",()=>{
-  const light=document.body.classList.toggle("light");
-  document.getElementById("theme").innerHTML=light?"&#9789;":"&#9788;";
+  darkMode=!darkMode; applyTheme();
+  try{localStorage.setItem(THEME_KEY,darkMode?"dark":"light");}catch(e){}
 });
 /* ---------- due date ---------- */
 /* Day 30 from the issue date, moved forward to the next Friday the courts are
@@ -3150,6 +3218,24 @@ q.addEventListener("input",()=>{
   renderHome(q.value);
 });
 clr.addEventListener("click",()=>{q.value="";clr.style.display="none";q.focus();renderHome("");});
+/* Deck numbers are the commonest lookup and the phone keyboard opens on
+   letters. 123 swaps the search box to the number pad (ABC swaps back), and
+   the choice is remembered on this device. */
+const kb=document.getElementById("kb");
+var KB_KEY="pvh_kb", kbNum=false;
+try{kbNum=localStorage.getItem(KB_KEY)==="num";}catch(e){}
+function kbApply(){
+  q.setAttribute("inputmode",kbNum?"numeric":"text");
+  kb.textContent=kbNum?"ABC":"123";
+  kb.setAttribute("aria-label",kbNum?"Switch to letter keyboard":"Switch to number keypad");
+}
+kbApply();
+kb.addEventListener("click",()=>{
+  kbNum=!kbNum; kbApply();
+  try{localStorage.setItem(KB_KEY,kbNum?"num":"text");}catch(e){}
+  /* The keyboard only changes on a fresh focus. */
+  q.blur(); q.focus();
+});
 window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=setSort;
 window.markChecked=markChecked;window.markCheckedV=markCheckedV;
 window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
