@@ -29,8 +29,10 @@ It also refuses files that must never be committed (the data, the exports,
 the intel output, the local config) even if someone force-adds one.
 
 Without PVH_data.json there is nothing to compare against: the check says so
-and lets the commit through. A false alarm can be overridden with
-`git commit --no-verify`.
+and lets the commit through. In a worktree (`git worktree add`) the data is
+read from the project folder, since the worktree has no copy of its own; if
+it is not there either, the commit is refused rather than let through
+unchecked. A false alarm can be overridden with `git commit --no-verify`.
 """
 import os
 import re
@@ -55,6 +57,19 @@ STREET_TYPES = set(STREET_ABBR.values())
 
 def git(*args):
     return subprocess.run(["git"] + list(args), capture_output=True).stdout.decode("utf-8", "replace")
+
+
+def project_folder():
+    """The main working folder, also when git runs in a linked worktree, whose
+    own folder never holds the data. git lists it first."""
+    for line in git("worktree", "list", "--porcelain").splitlines():
+        if line.startswith("worktree "):
+            return line[len("worktree "):].strip()
+    return None
+
+
+def same_folder(a, b):
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 
 
 def toks(s):
@@ -218,8 +233,20 @@ def main():
             print("\nUnstage them with:  git restore --staged <file>\n")
             return 1
 
-    data = os.environ.get("PVH_DATA") or os.path.join(root, "PVH_data.json")
+    home = project_folder() or root
+    in_worktree = not same_folder(home, root)
+    data = os.environ.get("PVH_DATA")
+    if not data:
+        data = os.path.join(root, "PVH_data.json")
+        if not os.path.exists(data) and in_worktree:
+            data = os.path.join(home, "PVH_data.json")
     if not os.path.exists(data):
+        if in_worktree:
+            print("\nCommit blocked: this is a worktree, and PVH_data.json was not found here or in the")
+            print("project folder (%s), so names could not be checked.\n" % home)
+            print("Run the build in the project folder first, or set PVH_DATA to a copy of the file.")
+            print("To commit anyway:  git commit --no-verify\n")
+            return 1
         print("pii check: PVH_data.json not found, so names could not be checked. Commit allowed.")
         return 0
     terms = load_terms(data)
