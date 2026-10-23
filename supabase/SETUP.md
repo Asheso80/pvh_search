@@ -121,6 +121,30 @@ What it adds:
   change only when the link is added or removed, which `link_events` records
   with who did it. A quiet relabelling on its own is ignored.
 
+## Upgrading an existing project: operator photos
+
+Run `supabase/007_photos.sql` once in the SQL editor. It is safe to run again, and
+it is not part of `schema.sql`. It creates a **private** storage bucket,
+`operator-photos`, and the rules for it. It touches none of the existing tables.
+
+- Anyone with a `profiles` row can read a photo; no one else can, and nothing is
+  public. Officers cannot upload, replace or delete: only an account listed in
+  `photo_admins` can.
+- Make yourself the administrator once, with the email you sign in with:
+
+```sql
+insert into public.photo_admins (id)
+select id from auth.users where email = 'you@example.com'
+on conflict do nothing;
+```
+
+- Files are JPEGs of at most 200 KB, named by 24 hex characters (a one-way hash of
+  the record key, so a licence number never appears in a name or URL).
+- The photos themselves are personal information. They are never committed to
+  the repo and never go in `docs/`.
+- To cut one person off from the photos, delete their `profiles` row -- the same
+  as for notes.
+
 ## Reset an officer's password
 
 Officer logins need not be real mailboxes, so the dashboard's emailed reset link

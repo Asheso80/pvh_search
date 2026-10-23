@@ -9,6 +9,10 @@ Open http://127.0.0.1:8795/ and sign in under Shared notes as
 officer1@test or officer2@test, password "test" (two accounts, so editing
 someone else's note or unlinking their link can be tried).
 
+Operator photos: the first three made-up operators have drawn cartoon faces, served
+from a pretend photo bucket to a signed-in officer only; the fourth has none (initials
+stay). Needs Pillow (py -m pip install pillow). /__test/photo_hits counts requests.
+
 What it serves is the single-file app built from build_pvh_field_app.py as it
 is in the folder right now -- saved but uncommitted edits included -- rebuilt
 on every reload. The records are invented and the shared-notes server is this
@@ -26,10 +30,12 @@ tailnet, run once in an ADMINISTRATOR terminal:
 and open https://<this PC's tailnet name>:8447/ . Remove it afterwards with
     tailscale serve --https=8447 off
 """
+import io
 import os
 import sys
 import json
 import uuid
+import hashlib
 import datetime
 import threading
 import importlib.util
@@ -120,6 +126,48 @@ def app_html():
     return (B.TEMPLATE.replace("__HEAD_EXTRA__", "")
             .replace("__DATA_SCRIPT__", '<script id="data" type="application/json">' + payload + "</script>")
             .replace("__BOOT__", boot).replace("__SHPIN__", "").replace("__APPVER__", "TEST BUILD"))
+
+
+# ----------------------------------------------------------- pretend photo bucket
+# Drawn cartoon faces for the first three made-up operators (the fourth has none, to
+# show the initials fallback). Files are named as the real bucket's are: the first 24
+# hex characters of SHA-256("pvh-photo:" + the operator's record key).
+PHOTO_HITS = {}   # file name -> times the "bucket" was asked for it (shown at /__test/photo_hits)
+
+
+def photo_id(key):
+    return hashlib.sha256(("pvh-photo:" + key).encode("utf-8")).hexdigest()[:24]
+
+
+def cartoon_face(i):
+    from PIL import Image, ImageDraw
+    bg = [(150, 175, 205), (190, 170, 150), (160, 190, 170)][i % 3]
+    skin = [(224, 172, 130), (141, 85, 54), (245, 205, 170)][i % 3]
+    hair = [(40, 30, 25), (20, 20, 20), (150, 90, 40)][i % 3]
+    shirt = [(60, 70, 90), (120, 40, 40), (50, 90, 70)][i % 3]
+    w, h = 120, 158
+    im = Image.new("RGB", (w, h), bg)
+    d = ImageDraw.Draw(im)
+    d.ellipse((5, 118, 115, 220), fill=shirt)                  # shoulders
+    d.rectangle((48, 98, 72, 128), fill=skin)                  # neck
+    d.ellipse((24, 22, 96, 112), fill=hair)                    # hair behind
+    d.ellipse((28, 32, 92, 108), fill=skin)                    # face
+    d.pieslice((26, 26, 94, 82), 180, 360, fill=hair)          # fringe
+    for x in (46, 74):
+        d.ellipse((x - 5, 62, x + 5, 70), fill="white")
+        d.ellipse((x - 2, 63, x + 2, 69), fill=(30, 30, 30))   # eyes
+    d.arc((46, 76, 74, 96), 20, 160, fill=(120, 40, 40), width=2)   # smile
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", quality=85)
+    return buf.getvalue()
+
+
+PHOTOS = {}
+
+
+def make_photos():
+    for i in range(3):
+        PHOTOS[photo_id("ZZTEST00000%d" % i) + ".jpg"] = cartoon_face(i)
 
 
 # ------------------------------------------------------- pretend shared notes
@@ -268,6 +316,17 @@ class Handler(BaseHTTPRequestHandler):
         path, query = self.parts()
         if path in ("/", "/index.html"):
             return self.send(200, app_html().encode("utf-8"), "text/html; charset=utf-8")
+        if path == "/__test/photo_hits":
+            return self.send(200, PHOTO_HITS)
+        if path.startswith("/storage/v1/object/authenticated/operator-photos/"):
+            if not self.signed_in():
+                return self.send(400, {"statusCode": "400", "error": "Unauthorized", "message": "Invalid JWT"})
+            name = path.rsplit("/", 1)[1]
+            PHOTO_HITS[name] = PHOTO_HITS.get(name, 0) + 1
+            if name in PHOTOS:
+                return self.send(200, PHOTOS[name], "image/jpeg")
+            # The real storage API answers a missing object with HTTP 400 and this body.
+            return self.send(400, {"statusCode": "404", "error": "not_found", "message": "Object not found"})
         t = self.table(path)
         if not t:
             return self.send(404, {"message": "not found"})
@@ -326,6 +385,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     seed()
+    make_photos()
     app_html()   # fail now, not in the browser, if the build script has an error
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print("PVH TEST server -- made-up records, pretend shared notes. Nothing real is used or sent.")
