@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 pvh_daemon.py
 
 Workaround for restricted Task Scheduler access: runs the PVH pull/build
@@ -27,11 +27,16 @@ Behaviour:
   - Real gap: if you log out (not just lock the screen) or the machine
     restarts and you're not back before 07:30, that day's run is missed.
     Same exposure a "logged on" Task Scheduler task would have had.
+  - logs\daemon.log only says when each run happened and how it ended. What
+    the run did -- including the build's data warnings, which name owners
+    and operators -- is in that day's pull_and_build log, kept 90 days. This
+    log starts a new file each day and keeps the same 90.
 """
 
 import sys
 import time
 import logging
+import logging.handlers
 import subprocess
 import msvcrt
 from datetime import datetime, timedelta
@@ -42,6 +47,7 @@ PULL_SCRIPT = SCRIPT_DIR / "pull_and_build_pvh.py"
 LOG_DIR = SCRIPT_DIR / "logs"
 LOCK_FILE = SCRIPT_DIR / "daemon.lock"
 RUN_AT_HOUR, RUN_AT_MINUTE = 7, 30  # 7:30 AM -- adjust if you want it closer to 8:00
+LOG_KEEP_DAYS = 90  # same as pull_and_build_pvh.py
 
 
 def setup_logging():
@@ -51,7 +57,8 @@ def setup_logging():
         format="%(asctime)s  %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
-            logging.FileHandler(LOG_DIR / "daemon.log", encoding="utf-8"),
+            logging.handlers.TimedRotatingFileHandler(
+                LOG_DIR / "daemon.log", when="midnight", backupCount=LOG_KEEP_DAYS, encoding="utf-8"),
             logging.StreamHandler(sys.stdout),
         ],
     )
@@ -87,11 +94,13 @@ def run_pipeline(log):
         [python_exe, str(PULL_SCRIPT)],
         cwd=str(SCRIPT_DIR), capture_output=True, text=True,
     )
-    for line in result.stdout.splitlines():
-        log.info(f"  [pull] {line}")
+    # The run's own output is already in its dated log; copying it here would
+    # keep the names in it past that log's 90 days. Errors Python itself
+    # reports (a crash before the run could log anything) are still kept.
     for line in result.stderr.splitlines():
         log.error(f"  [pull] {line}")
-    log.info(f"Run finished with exit code {result.returncode}")
+    log.info(f"Run finished with exit code {result.returncode} -- "
+             f"details in logs\\pull_and_build_{datetime.now():%Y-%m-%d}.log")
 
 
 def main():
