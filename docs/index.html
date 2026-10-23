@@ -56,6 +56,10 @@ header{position:sticky;top:0;z-index:10;background:var(--bg);
 h1{font-size:15px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;flex:1;
   min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 body.inrec .hfield{display:none}
+/* On a long record page, once scrolled, the header shrinks to the back button and
+   title so the sticky bar stops taking a sixth of the screen. */
+body.hmin #searchwrap,body.hmin #duebtn,body.hmin #locbtn,body.hmin #theme{display:none}
+body.hmin header{padding-bottom:10px}
 h1 small{display:block;font-size:11px;font-weight:400;color:var(--faint);
   letter-spacing:.02em;text-transform:none;overflow:hidden;text-overflow:ellipsis}
 #searchwrap{margin-top:8px;position:relative}
@@ -177,11 +181,41 @@ main{flex:1;padding:10px 12px 40px}
 .ntprev b{color:var(--bad)}
 .copybtn.quiet{display:block;width:auto;margin:0 0 6px auto;padding:0 12px;min-height:44px;
   font-size:13px;background:transparent;border:0;color:var(--accent)}
+.moredet{margin:0 0 14px}
+.moredet>summary,.matchd>summary{cursor:pointer;min-height:44px;display:flex;align-items:center;
+  font-weight:600;font-size:14px;color:var(--dim)}
+.moredet>summary::before,.matchd>summary::before{content:"\25B8";margin-right:8px;flex:0 0 auto}
+.moredet[open]>summary::before,.matchd[open]>summary::before{content:"\25BE"}
+.moredet>.grid{margin-top:4px}
+.matchd{margin:14px 0;background:var(--panel);border:1px dashed var(--line);border-radius:12px;padding:0 14px}
+.matchd>summary{color:var(--warn)}
+.matchd .seclabel{margin-top:6px}
 .opcd summary{cursor:pointer;color:var(--warn);font-weight:600;min-height:44px;display:flex;align-items:center}
 .opcl{padding:0 0 8px}
 .appinfo{margin:18px 0 6px;text-align:center}
 .appinfo summary{cursor:pointer;color:var(--faint);font-size:12px;min-height:44px;
   display:flex;align-items:center;justify-content:center}
+/* operator-vehicle links */
+.lkbox{margin:14px 0}
+.lkhead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 8px}
+.lkfoot{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;
+  color:var(--faint);margin:-4px 2px 12px}
+.lkfoot .link{flex:0 0 auto;font-weight:600;display:inline-block;padding:12px 8px;margin:-12px -8px}
+.pvbox{position:fixed;top:0;right:0;bottom:0;left:0;z-index:1000;background:rgba(0,0,0,.5);
+  display:flex;align-items:center;justify-content:center;padding:20px}
+.pvbox-card{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:16px;
+  padding:18px 18px 16px;max-width:420px;width:100%}
+.pvbox-t{font-size:17px;font-weight:700;margin-bottom:8px}
+.pvbox-m{font-size:15px;line-height:1.45;color:var(--dim);margin-bottom:16px}
+.pvbox-b{display:flex;gap:10px}
+.pvbox-b .clbtn{flex:1 1 0}
+.pvbox-danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.lkask{display:flex;flex-direction:column;gap:8px;margin:-4px 0 12px;padding:10px 13px;
+  border:1px solid var(--warn);border-radius:12px;background:rgba(247,190,74,.13);font-size:13px;line-height:1.45}
+.lkask-btns{display:flex;gap:8px}
+.lkpick{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px}
+.lkopt{padding:10px 4px;border-top:1px solid var(--line);cursor:pointer;min-height:44px;font-size:15px}
+.lkopt.off{opacity:.55;cursor:default}
 .ntform{margin-bottom:12px}
 .ntext{display:block;width:100%;min-height:86px;resize:vertical;border:1px solid var(--line);
   border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-size:16px;
@@ -397,7 +431,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v28 · 2026-10-10";
+var APP_VERSION="v32 · 2026-10-22";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 /* The record counts are on the home screen; the header keeps to one line. */
@@ -727,9 +761,10 @@ var SH=(DB.shared&&DB.shared.url&&DB.shared.key)?DB.shared:null;
 var SC_KEY="pvh_shared_cache", OB_KEY="pvh_outbox", AU_KEY="pvh_auth";
 function jget(k,d){try{var r=localStorage.getItem(k);return r?JSON.parse(r):d;}catch(e){return d;}}
 function jset(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
-function emptySC(){return {notes:{},checks:{},hist:{},ev:{},queries:{},qhist:{},nSince:"",cSince:"",qSince:"",at:0};}
+function emptySC(){return {notes:{},checks:{},hist:{},ev:{},queries:{},qhist:{},links:{},lOk:null,nSince:"",cSince:"",qSince:"",lSince:"",at:0};}
 var SC=jget(SC_KEY,null);
 if(!SC||typeof SC!=="object"||!SC.notes||!SC.checks)SC=emptySC();
+if(!SC.links){SC.links={}; SC.lOk=null; SC.lSince="";}
 /* A cache written before the check list existed has only each record's latest
    check. Start its check pull from scratch so the list backfills. */
 if(!SC.hist){SC.hist={}; SC.cSince="";}
@@ -756,7 +791,34 @@ function scSave(){
 }
 function obSave(){
   NIDX=null;
-  if(!jset(OB_KEY,OB))alert("This device is out of storage, so that could not be saved. Free some space and try again.");
+  if(!jset(OB_KEY,OB))tellBox("Out of storage","This device is out of storage, so that could not be saved. Free some space and try again.");
+}
+/* In-app message boxes in place of the browser's own pop-ups, which name the
+   page's web address. Same look as the rest of the app; a tap outside, Escape
+   or Cancel dismisses. Text goes in as text, never as markup. */
+function boxClose(){var e=document.getElementById("pvbox"); if(e)e.remove();}
+function boxOpen(title,msg,btns){
+  boxClose();
+  var d=document.createElement("div"); d.id="pvbox"; d.className="pvbox";
+  d.setAttribute("role","dialog"); d.setAttribute("aria-modal","true");
+  var c=document.createElement("div"); c.className="pvbox-card";
+  var t=document.createElement("div"); t.className="pvbox-t"; t.textContent=title;
+  var m=document.createElement("div"); m.className="pvbox-m"; m.textContent=msg;
+  var b=document.createElement("div"); b.className="pvbox-b";
+  btns.forEach(function(x){
+    var el=document.createElement("button"); el.className="clbtn"+(x.danger?" pvbox-danger":""); el.textContent=x.label;
+    el.addEventListener("click",function(){boxClose(); if(x.run)x.run();});
+    b.appendChild(el);
+  });
+  c.appendChild(t); c.appendChild(m); c.appendChild(b); d.appendChild(c);
+  d.addEventListener("click",function(ev){if(ev.target===d)boxClose();});
+  document.body.appendChild(d);
+}
+function askBox(title,msg,yes,run){boxOpen(title,msg,[{label:"Cancel"},{label:yes,danger:true,run:run}]);}
+function tellBox(title,msg){boxOpen(title,msg,[{label:"OK"}]);}
+if(!window.__boxKey){
+  window.__boxKey=true;
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")boxClose();});
 }
 function auSave(){jset(AU_KEY,AU);}
 function tsParse(s){
@@ -866,6 +928,10 @@ function shFlush(){
     if(op.type==="note")req=shApi("POST","/rest/v1/notes",op.row,"return=minimal");
     else if(op.type==="check")req=shApi("POST","/rest/v1/checks",op.row,"return=minimal");
     else if(op.type==="query")req=shApi("POST","/rest/v1/queries",op.row,"return=minimal");
+    else if(op.type==="link")req=shApi("POST","/rest/v1/links?on_conflict=id",op.row,
+      "resolution=merge-duplicates,return=minimal");
+    else if(op.type==="unlink")req=shApi("PATCH","/rest/v1/links?id=eq."+encodeURIComponent(op.linkId),
+      {active:false},"return=minimal");
     else if(op.type==="edit")req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
       {body:op.body},"return=minimal");
     else if(op.type==="remove")req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
@@ -957,9 +1023,30 @@ function pullEvents(){
     });
   }).then(function(s){SC.eSince=s;},function(e){if(e&&(e.net||e.auth))throw e;});
 }
+/* Operator-vehicle links. Never allowed to fail a sync: until 005_links.sql has
+   been run there is no such table, and lOk stays false so the link buttons are
+   hidden while everything else carries on. */
+function pullLinks(){
+  return pullPages("links","updated_at",SC.lSince||"1970-01-01T00:00:00Z",function(rows){
+    rows.forEach(function(l){
+      var c=SC.links[l.id];
+      if(!c||c.updated_at!==l.updated_at)CHG=true;
+      SC.links[l.id]={id:l.id,op_key:l.op_key,veh_key:l.veh_key,op_label:l.op_label||"",veh_label:l.veh_label||"",
+        active:!!l.active,updated_at:l.updated_at,updated_name:l.updated_name||""};
+    });
+  }).then(function(s){
+    if(SC.lOk!==true)CHG=true;
+    SC.lSince=s; SC.lOk=true;
+  },function(e){
+    if(e&&(e.net||e.auth))throw e;
+    if(SC.lOk!==false)CHG=true;
+    SC.lOk=false;
+  });
+}
 function typing(){
   var a=document.activeElement, id=a&&a.id;
-  if(id==="ntbody"||id==="nteditbody"||id==="shem"||id==="shpw")return true;
+  if(id==="ntbody"||id==="nteditbody"||id==="shem"||id==="shpw"||id==="lkq")return true;
+  if(LK_OPEN)return true;
   if(document.getElementById("nteditbody"))return true;
   var t=document.getElementById("ntbody");
   return !!(t&&t.value);
@@ -969,7 +1056,7 @@ function shSync(force){
   if(!shOn()||!shSigned()||SYNC.busy)return Promise.resolve();
   if(!force&&Date.now()-SYNC.lastTry<20000)return Promise.resolve();
   SYNC.busy=true; SYNC.lastTry=Date.now(); CHG=false;
-  return shFlush().then(pullNotes).then(pullChecks).then(pullQueries).then(pullEvents).then(function(){
+  return shFlush().then(pullNotes).then(pullChecks).then(pullQueries).then(pullEvents).then(pullLinks).then(function(){
     SYNC.err=""; SC.at=Math.floor(Date.now()/1000); scSave();
   }).catch(function(e){
     if(e&&e.auth)SYNC.err=(AU&&AU.dead)?"Signed out — sign in again to send and receive.":
@@ -1170,11 +1257,13 @@ function ntEditSave(id){
   obSave(); NT_EDIT=""; keepScroll(); shSync(true);
 }
 function ntRemove(id){
-  if(!confirm("Remove this note?\n\nIt stays on file. Everyone can still see that it was removed, by whom and when, and can read the original."))return;
-  var isPending=OB.some(function(o){return o.type==="note"&&o.row.id===id;});
-  if(isPending)OB=OB.filter(function(o){return !(o.type==="note"&&o.row.id===id);});
-  else OB.push({type:"remove",noteId:id,at:Math.floor(Date.now()/1000)});
-  obSave(); keepScroll(); if(!isPending)shSync(true);
+  askBox("Remove this note?","It stays on file. Everyone can still see that it was removed, by whom and when, and can read the original.",
+    "Remove",function(){
+    var isPending=OB.some(function(o){return o.type==="note"&&o.row.id===id;});
+    if(isPending)OB=OB.filter(function(o){return !(o.type==="note"&&o.row.id===id);});
+    else OB.push({type:"remove",noteId:id,at:Math.floor(Date.now()/1000)});
+    obSave(); keepScroll(); if(!isPending)shSync(true);
+  });
 }
 function ntSection(t,i,key){
   if(!shOn())return "";
@@ -1192,6 +1281,131 @@ function ntSection(t,i,key){
       '<span class="link" onclick="go(\'shared\')">Sign in…</span></div>';
   }
   return h+(l.length?l.map(ntItem).join(""):'<div class="empty">No notes on this record yet.</div>');
+}
+
+/* --- operator-vehicle links. "This operator drives this vehicle", one shared row
+   per pair, made from either record and visible on both. Any signed-in officer
+   can add or remove one; the database keeps who and when (supabase/005_links.sql).
+   The buttons only appear once the links table has answered a sync. */
+var LK_OPEN="", LK_ASK="", LK_IDS=[], LKV=null, LKO=null;
+function lkOn(){return shOn()&&shSigned()&&SC.lOk===true;}
+function lkMaps(){
+  if(LKV)return;
+  LKV={}; LKO={};
+  V.forEach(function(v){LKV[clKeyV(v)]=v;});
+  O.forEach(function(o){LKO[clKey(o)]=o;});
+}
+function lkId(opKey,vehKey){return "l|"+opKey+"|"+vehKey;}
+/* The server's links with this device's unsent adds and removals laid over
+   them, so a link shows the moment it is made. */
+function lkAll(){
+  var me=(AU&&AU.name)||"", m={};
+  Object.keys(SC.links).forEach(function(id){
+    var l=SC.links[id];
+    m[id]={id:id,op:l.op_key,veh:l.veh_key,opl:l.op_label,vl:l.veh_label,by:l.updated_name,
+      t:tsParse(l.updated_at),active:l.active,pending:false,failed:""};
+  });
+  OB.forEach(function(op){
+    if(op.type==="link"){
+      var r=op.row;
+      m[r.id]={id:r.id,op:r.op_key,veh:r.veh_key,opl:r.op_label||"",vl:r.veh_label||"",by:me,
+        t:op.at,active:true,pending:true,failed:op.failed||""};
+    }else if(op.type==="unlink"&&m[op.linkId]&&!op.failed){
+      m[op.linkId].active=false; m[op.linkId].pending=true;
+    }
+  });
+  return m;
+}
+function lkFor(side,key){
+  var m=lkAll();
+  return Object.keys(m).map(function(id){return m[id];}).filter(function(l){
+    return l.active&&(side==="o"?l.op===key:l.veh===key);
+  }).sort(function(a,b){return b.t-a.t;});
+}
+function lkKey(side,i){
+  var r=side==="o"?O[i]:V[i];
+  return r?(side==="o"?clKey(r):clKeyV(r)):"";
+}
+function lkBlock(side,i){
+  if(!lkOn())return "";
+  lkMaps(); LK_IDS=[];
+  var key=lkKey(side,i); if(!key)return "";
+  var ls=lkFor(side,key), open=(LK_OPEN===side+"/"+i);
+  var h='<div class="lkbox"><div class="lkhead"><span class="seclabel" style="margin:0">'+
+    (side==="o"?"Drives":"Seen driven by")+(ls.length?' ('+ls.length+')':'')+'</span>'+
+    (open?'':'<button class="clbtn" onclick="lkOpen(\''+side+'\','+i+')">+ '+
+      (side==="o"?"Link vehicle":"Link operator")+'</button>')+'</div>';
+  if(open)h+=lkPicker(side,i);
+  else if(!ls.length)h+='<div class="empty">'+(side==="o"?"No vehicle linked yet.":"No operator linked yet.")+'</div>';
+  ls.forEach(function(l){
+    var other=side==="o"?LKV[l.veh]:LKO[l.op], n=LK_IDS.push(l.id)-1;
+    h+=other?(side==="o"?vehCard(other):opCard(other)):
+      '<div class="card"><div class="cmain"><div class="cname">'+esc((side==="o"?l.vl:l.opl)||"Record")+
+      '</div><div class="csub">Not in the current data</div></div></div>';
+    h+=(LK_ASK===l.id)
+      ?'<div class="lkask"><span>Unlink these two? Anyone can link them again. It is kept on file with your name.</span>'+
+        '<span class="lkask-btns"><button class="clbtn" onclick="lkDo('+n+')">Unlink</button>'+
+        '<button class="clbtn" onclick="lkCancel()">Keep</button></span></div>'
+      :'<div class="lkfoot"><span>Linked by '+esc(l.by||"?")+' · '+esc(ntWhen(l.t))+
+        (l.pending?' · waiting to send':'')+(l.failed?' · not sent: '+esc(l.failed):'')+'</span>'+
+        '<span class="link" onclick="lkRemove('+n+')">Unlink</span></div>';
+  });
+  return h+'</div>';
+}
+function lkPicker(side,i){
+  return '<div class="lkpick"><input id="lkq" class="dsinput" type="search" autocomplete="off" spellcheck="false" '+
+    'placeholder="'+(side==="o"?"Deck number, plate or owner":"Operator name or licence number")+'" '+
+    'oninput="lkFind(\''+side+'\','+i+')">'+
+    '<div id="lkres"><div class="hint" style="padding:8px 2px">Type to search.</div></div>'+
+    '<button class="clbtn" onclick="lkClose()">Cancel</button></div>';
+}
+function lkOpen(side,i){
+  LK_OPEN=side+"/"+i; keepScroll();
+  setTimeout(function(){var e=document.getElementById("lkq"); if(e)e.focus();},60);
+}
+function lkClose(){LK_OPEN=""; keepScroll();}
+function lkFind(side,i){
+  var el=document.getElementById("lkq"), box=document.getElementById("lkres"); if(!el||!box)return;
+  var r=search(el.value);
+  if(!r){box.innerHTML='<div class="hint" style="padding:8px 2px">Type at least two letters, or a deck number.</div>'; return;}
+  var have={}; lkFor(side,lkKey(side,i)).forEach(function(l){have[side==="o"?l.veh:l.op]=1;});
+  var all=side==="o"?r.v:r.o, list=all.slice(0,8);
+  box.innerHTML=list.length?list.map(function(x){
+    var on=have[side==="o"?clKeyV(x):clKey(x)];
+    var top=side==="o"
+      ?'<b>Deck '+esc(x["Deck No"]==null||x["Deck No"]===""?"—":x["Deck No"])+'</b> · '+esc(x["Make Model"]||"Vehicle")+
+        (x["Plate No"]?' · '+esc(x["Plate No"]):'')
+      :'<b>'+esc(opName(x))+'</b>'+(x["Licence Number"]?' · '+esc(x["Licence Number"]):'');
+    var sub=side==="o"?'Owner: '+esc(ownerName(x)):esc(x["Business Name"]||"");
+    return '<div class="lkopt'+(on?' off':'')+'"'+(on?'':' onclick="lkAdd(\''+side+'\','+i+','+x._i+')"')+'>'+top+
+      '<div class="faintx">'+sub+(on?(sub?' · ':'')+'already linked':'')+'</div></div>';
+  }).join("")+(all.length>8?'<div class="hint" style="padding:6px 2px">Showing the first 8. Type more to narrow it.</div>':''):
+    '<div class="empty">No match.</div>';
+}
+function lkAdd(side,i,j){
+  if(!shSigned())return;
+  var op=side==="o"?O[i]:O[j], veh=side==="o"?V[j]:V[i]; if(!op||!veh)return;
+  var ok=clKey(op), vk=clKeyV(veh);
+  OB.push({type:"link",at:Math.floor(Date.now()/1000),row:{id:lkId(ok,vk),op_key:ok,veh_key:vk,
+    op_label:(opName(op)+" "+(op["Licence Number"]||"")).trim().slice(0,200),
+    veh_label:("Deck "+(veh["Deck No"]==null?"":veh["Deck No"])+" "+vehLabel(veh)).trim().slice(0,200),active:true}});
+  obSave(); LK_OPEN=""; keepScroll(); shSync(true);
+}
+/* A link still in the outbox, with nothing on the server yet, has not reached
+   anyone, so unlinking it just drops it. Otherwise the removal is sent and
+   kept on file with the officer's name. */
+function lkRemove(n){
+  var id=LK_IDS[n]; if(!id||!shSigned())return;
+  LK_ASK=id; keepScroll();
+}
+function lkCancel(){LK_ASK=""; keepScroll();}
+function lkDo(n){
+  var id=LK_IDS[n]; if(!id||!shSigned())return;
+  LK_ASK="";
+  var unsent=!SC.links[id]&&OB.some(function(o){return o.type==="link"&&o.row.id===id;});
+  if(unsent)OB=OB.filter(function(o){return !(o.type==="link"&&o.row.id===id);});
+  else OB.push({type:"unlink",linkId:id,at:Math.floor(Date.now()/1000)});
+  obSave(); keepScroll(); if(!unsent)shSync(true);
 }
 
 /* --- records that still have an action open, for the home screen. */
@@ -1291,13 +1505,16 @@ function renderShared(){
 function shNow(){shSync(true).then(function(){if(location.hash.replace(/^#\/?/,"")==="shared")renderShared();}); renderShared();}
 function shOut(){
   var n=OB.length;
-  if(!confirm(n?(n+" item"+(n===1?"":"s")+" not yet sent will be lost. Sign out anyway?"):
-      "Sign out of shared notes on this device? The shared notes kept here are removed."))return;
-  var was=AU;
-  AU=null; OB=[]; SC=emptySC(); NIDX=null;
-  try{localStorage.removeItem(AU_KEY); localStorage.removeItem(OB_KEY); localStorage.removeItem(SC_KEY);}catch(e){}
-  renderShared();
-  shEndSession(was);
+  askBox("Sign out of shared notes?",
+    n?(n+" item"+(n===1?"":"s")+" not yet sent will be lost."):
+      "The shared notes kept on this device are removed. They stay on the server.",
+    "Sign out",function(){
+    var was=AU;
+    AU=null; OB=[]; SC=emptySC(); NIDX=null;
+    try{localStorage.removeItem(AU_KEY); localStorage.removeItem(OB_KEY); localStorage.removeItem(SC_KEY);}catch(e){}
+    renderShared();
+    shEndSession(was);
+  });
 }
 /* Signing out also ends the session on the server (this device's only, not
    the officer's other devices), so a copy of the sign-in taken from the phone
@@ -1407,10 +1624,12 @@ function markCheckedW(i){
   renderOwner(i);
 }
 function clearCheckLog(){
-  if(!confirm("Clear this device's own stop and query history? Anything already shared with other officers stays shared."))return;
-  try{localStorage.removeItem(CLOG_KEY);}catch(e){}
-  CLOG=null;
-  renderHome(q.value);
+  askBox("Clear this device's history?","This removes the stop and query history kept on this device. Anything already shared with other officers stays shared.",
+    "Clear",function(){
+    try{localStorage.removeItem(CLOG_KEY);}catch(e){}
+    CLOG=null;
+    renderHome(q.value);
+  });
 }
 function checkedCards(){
   var m=clLoad(), byKey={};
@@ -1724,6 +1943,7 @@ function renderVehicle(i){
   h+=clPanel(priorV,"markCheckedV("+i+")");
   h+=ntBar(clKeyV(v));
   h+='<button class="copybtn quiet" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
+  h+=lkBlock("v",i);
   h+='<div class="grid">'+
     row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
     (owner&&owner._op!=null?row("Owner-Operator",opLink(owner._op)):"")+
@@ -1731,15 +1951,17 @@ function renderVehicle(i){
     (op&&(op["Cell Phone"]||op["Phone"])?row("Owner phone (op. record)",telLink(op["Cell Phone"]||op["Phone"])):"")+
     row("Business",dash(v["Business Name"]))+
     (v["Owner Address"]?row("Owner address",esc(v["Owner Address"])):"")+
-    row("Owner ID",dash(v["Owner ID"]))+
-    row("District",dash(v["District"]))+
     row("VIN",v["VIN"]?tapField(v["VIN"]):"\u2014",1)+
     row("Vehicle licence no",v["Licence No"]?tapField(v["Licence No"]):"\u2014",1)+
     row("Last inspection",dash(v["Inspection Date"]))+
+    '</div>'+
+    '<details class="moredet"><summary>More details</summary><div class="grid">'+
+    row("District",dash(v["District"]))+
+    row("Owner ID",dash(v["Owner ID"]))+
     row("First MVI",dash(v["First MVIDate"]))+
     row("MVI due (MVI + 1 yr)",dash(addYear(v["First MVIDate"])))+
     row("Vehicle ID",dash(v["Vehicle ID"]))+
-    '</div>';
+    '</div></details>';
   h+=ntSection("v",i,clKeyV(v));
   if(v["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(v["Notes"])+'</div>';
   if(others.length){
@@ -1776,27 +1998,34 @@ function renderOperator(i){
   h+=clPanel(prior,"markChecked("+i+")");
   h+=ntBar(clKey(o));
   h+='<button class="copybtn quiet" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
+  h+=lkBlock("o",i);
   h+='<div class="grid">'+
     row("Address",addr||"\u2014")+
     row("Phone",telLink(o["Phone"]))+
     row("Cell",telLink(o["Cell Phone"]))+
+    '</div>'+
+    '<details class="moredet"><summary>More details</summary><div class="grid">'+
     row("Master number",dash(o["Master Number"]),1)+
     row("Operator ID",dash(o["ID"]))+
     row("Licence year",dash(o["v Year"]))+
     row("Approved",dash(o["Approval Date"]))+
     row("District",dash(o["District"]))+
-    '</div>';
+    '</div></details>';
   h+=ntSection("o",i,clKey(o));
   if(o["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(o["Notes"])+'</div>';
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Vehicles in this name ('+veh.length+')</div>';
   const sn=(o._vsn||[]).map(ix=>V[ix]).filter(Boolean);
   h+=veh.length?veh.map(x=>vehCard(x)).join(""):'<div class="empty">'+(sn.length?
-    'None confirmed for this operator — see possible matches below.':
+    'None confirmed for this operator — see unconfirmed vehicles below.':
     'No active vehicles registered under this exact name.')+'</div>';
   const fz=(o._vfz||[]).map(ix=>V[ix]).filter(Boolean);
-  if(sn.length)h+='<div class="seclabel">Possible matches \u2014 other operators share this name, verify before relying on ('+sn.length+')</div>'+sn.map(x=>vehCard(x)).join("");
-  if(fz.length)h+='<div class="seclabel">Possible matches \u2014 similar name, verify before relying on ('+fz.length+')</div>'+fz.map(x=>vehCard(x)).join("");
+  /* Unconfirmed vehicles sit behind one line, closed, so they stay out of the way
+     of the confirmed ones but their count is always visible. */
+  if(sn.length||fz.length)h+='<details class="matchd"><summary>Unconfirmed vehicles \u2014 verify before relying on ('+(sn.length+fz.length)+')</summary>'+
+    (sn.length?'<div class="seclabel">Same name as other operators ('+sn.length+')</div>'+sn.map(x=>vehCard(x)).join(""):"")+
+    (fz.length?'<div class="seclabel">Similar name ('+fz.length+')</div>'+fz.map(x=>vehCard(x)).join(""):"")+
+    '</details>';
   main.innerHTML=h;
 }
 
@@ -1838,17 +2067,28 @@ function route(){
   /* A new page is a visit (and logs a query); the same page drawn again by a
      sync or keepScroll is not. */
   FRESH=(h!==ROUTE_LAST); ROUTE_LAST=h;
+  if(FRESH){LK_OPEN=""; LK_ASK="";}
   const m=/^(v|o|w)\/(\d+)$/.exec(h);
   const sp=(h==="shared"||h==="actions");
   window.scrollTo(0,0);
   document.getElementById("back").style.display=(m||sp)?"flex":"none";
   document.body.classList.toggle("inrec",!!(m||sp));
+  document.body.classList.remove("hmin");
   if(h==="shared"){ renderShared(); }
   else if(h==="actions"){ renderActions(); }
   else if(m){ if(m[1]==="v") renderVehicle(+m[2]); else if(m[1]==="o") renderOperator(+m[2]); else renderOwner(+m[2]); }
   else { renderHome(q.value); }
   FRESH=false;
 }
+/* Shrink the header on a long record page once scrolled. Two thresholds so the
+   height change itself cannot flip it back and forth. */
+window.addEventListener("scroll",function(){
+  var b=document.body, y=window.scrollY;
+  if(!b.classList.contains("inrec")){b.classList.remove("hmin");return;}
+  if(!b.classList.contains("hmin")){
+    if(y>140&&document.documentElement.scrollHeight>window.innerHeight+400)b.classList.add("hmin");
+  }else if(y<20)b.classList.remove("hmin");
+},{passive:true});
 /* Light by default (it reads best outdoors); dark is remembered on this device
    once chosen, for night shifts. The button names the mode it switches to. */
 var THEME_KEY="pvh_theme", darkMode=false;
@@ -2169,6 +2409,7 @@ window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
 window.pgMore=pgMore;window.jumpTo=jumpTo;window.ntShow=ntShow;window.ntDismiss=ntDismiss;window.ntHist=ntHist;window.ntEdit=ntEdit;window.ntEditCancel=ntEditCancel;
 window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
 window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
+window.lkOpen=lkOpen;window.lkClose=lkClose;window.lkFind=lkFind;window.lkAdd=lkAdd;window.lkRemove=lkRemove;window.lkDo=lkDo;window.lkCancel=lkCancel;
 window.__route=route;
 window.addEventListener("hashchange",route);
 route();

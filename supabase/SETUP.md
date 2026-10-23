@@ -88,6 +88,24 @@ What it guarantees:
 - To review the history: Table Editor → `note_events`, or
   `select * from public.note_events order by created_at;`
 
+## Upgrading an existing project: operator-vehicle links
+
+Run `supabase/005_links.sql` once in the SQL editor. It is safe to run again,
+and a fresh project does not need it: `schema.sql` already includes it. It
+adds a `links` table and a `link_events` history.
+
+It is purely additive. Phones on an older app version never touch the new
+tables, and a phone on the newer version simply hides the link buttons until
+the tables exist, so there is no need to time it with an app update.
+
+What it guarantees:
+
+- Any officer with a `profiles` row can add a link and any of them can remove
+  one. Nothing is erased: a removed link stays on file with `active = false`.
+- Every add and removal is kept in `link_events` with who and when, written by
+  the database. Names and times cannot be set from the app.
+- To review: `select * from public.link_events order by created_at;`
+
 ## Reset an officer's password
 
 Officer logins need not be real mailboxes, so the dashboard's emailed reset link
