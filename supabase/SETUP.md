@@ -106,6 +106,21 @@ What it guarantees:
   the database. Names and times cannot be set from the app.
 - To review: `select * from public.link_events order by created_at;`
 
+## Upgrading an existing project: link guards
+
+Run `supabase/006_link_guards.sql` once in the SQL editor, after 005. It is
+safe to run again, and a fresh project does not need it: `schema.sql` already
+includes it. If 005 is ever run again, run 006 again after it. No app update
+is needed.
+
+What it adds:
+
+- One row per operator and vehicle pair, enforced by the database: a link's id
+  must be the one made from its two record keys.
+- A link's labels (the names shown when a record is not in the current data)
+  change only when the link is added or removed, which `link_events` records
+  with who did it. A quiet relabelling on its own is ignored.
+
 ## Reset an officer's password
 
 Officer logins need not be real mailboxes, so the dashboard's emailed reset link
