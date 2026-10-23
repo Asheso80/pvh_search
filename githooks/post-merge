@@ -1,0 +1,6 @@
+#!/bin/sh
+# A merge changes the committed build script without a commit in this folder,
+# so post-commit never runs -- a branch built and tested in a worktree, then
+# merged here (fast-forward or not), would leave the 07:30 build on the old
+# script. Do the same update post-commit does. See githooks/post-commit.
+exec sh "$(dirname "$0")/post-commit"
