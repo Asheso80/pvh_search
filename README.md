@@ -118,6 +118,14 @@ Testing locally: serve the repo folder (`py -m http.server 8000`) and open
 `http://localhost:8000/docs/`. Opening `docs/index.html` straight off disk will not
 work — a `file://` page cannot register a service worker.
 
+`docs/` only ever talks to the real shared-notes server, so signing in there
+while testing puts real "Queried" marks, notes and links in front of every
+officer. To try a change instead, run `Start_Test_Server.bat` (`test_server.py`):
+the app as it is in the folder right now, with made-up records and a pretend
+shared-notes server that forgets everything when closed. Open
+`http://127.0.0.1:8795/` and sign in as `officer1@test` or `officer2@test`,
+password `test`.
+
 ---
 
 ## Shared notes and checks

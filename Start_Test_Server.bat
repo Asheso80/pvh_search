@@ -1,7 +1,18 @@
 @echo off
-rem Serves the test build (docs\) on this PC only (127.0.0.1:8777).
-rem Phones reach it through Tailscale: see the one-time command in the notes.
-cd /d "%~dp0docs"
-echo Test server for the operator-vehicle links branch.
-echo Close this window to stop it.
-py -m http.server 8777 --bind 127.0.0.1
+rem Try the app with MADE-UP records and a pretend shared-notes server
+rem (test_server.py), on this PC only: http://127.0.0.1:8795/
+rem Nothing real is read or sent, so testing never puts marks, notes or links
+rem in the real database. Phones: see the note at the top of test_server.py.
+cd /d "%~dp0"
+set "PY="
+where py >nul 2>nul && set "PY=py"
+if not defined PY (
+  where python >nul 2>nul && set "PY=python"
+)
+if not defined PY (
+  echo [X] Python was not found on this PC.
+  pause
+  exit /b 1
+)
+%PY% test_server.py %*
+pause
