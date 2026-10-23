@@ -1266,14 +1266,26 @@ main{flex:1;padding:10px 12px 40px}
 .deck.shuttle{border-color:var(--shuttle);color:var(--shuttle)}
 .deck span{font-size:10px;letter-spacing:.08em;font-weight:600;margin-bottom:2px}
 .deck.none{border-style:dashed;color:var(--faint);border-color:var(--line);font-size:11px}
-.opdot{flex:0 0 52px;height:52px;border-radius:50%;background:var(--panel2);
+.opdot{flex:0 0 64px;width:64px;height:64px;border-radius:14px;background:var(--panel2);
   border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
-  font-weight:700;font-size:18px;color:var(--dim);position:relative;overflow:hidden}
+  font-weight:700;font-size:22px;color:var(--dim);position:relative;overflow:hidden}
 /* An operator's photo sits over the initials and fades in once loaded; with no
-   photo (or no sign-in, or no signal) the initials simply stay. */
+   photo (or no sign-in, or no signal) the initials simply stay. The photo is a
+   portrait, so the square window is anchored near the top: head and shoulders. */
 .opdot img.ph{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;
-  object-position:50% 18%;opacity:0;transition:opacity .2s}
+  object-position:50% 8%;opacity:0;transition:opacity .2s}
 .opdot img.ph.on{opacity:1}
+/* Bigger on a record, and tap to enlarge once a photo is showing. */
+.dhead .opdot:not(.sm){flex:0 0 112px;width:112px;height:112px;border-radius:18px;font-size:34px}
+.opdot.has{cursor:zoom-in}
+.card .opdot.has{cursor:pointer}
+/* A driver named in a line of text gets a small tile beside the name. */
+.opdot.sm{display:inline-flex;flex:0 0 auto;width:26px;height:26px;border-radius:7px;font-size:10px;
+  margin-right:6px;vertical-align:middle}
+.phzoom{position:fixed;left:0;top:0;right:0;bottom:0;z-index:1000;display:flex;align-items:center;
+  justify-content:center;background:rgba(0,0,0,.82);cursor:zoom-out}
+.phzoom img{width:min(78vw,300px);aspect-ratio:172/226;object-fit:cover;border-radius:18px;
+  box-shadow:0 10px 40px rgba(0,0,0,.5);background:var(--panel2)}
 .cmain{flex:1;min-width:0}
 .cname{font-weight:600;font-size:16px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis}
@@ -1708,7 +1720,7 @@ function opName(o){
    than picking one -- the builder only links when the address confirms it. */
 function opLink(j){
   const o=O[j];
-  return '<span class="link" onclick="go(\'o/'+j+'\')">'+esc(opName(o))+
+  return '<span class="link" onclick="go(\'o/'+j+'\')">'+phSm(j)+esc(opName(o))+
     (o["Licence Number"]?' ('+esc(o["Licence Number"])+')':'')+' &#8250;</span>';
 }
 function opcNote(c){
@@ -2542,7 +2554,7 @@ function lkFind(side,i){
     var top=side==="o"
       ?'<b>Deck '+esc(x["Deck No"]==null||x["Deck No"]===""?"—":x["Deck No"])+'</b> · '+esc(x["Make Model"]||"Vehicle")+
         (x["Plate No"]?' · '+esc(x["Plate No"]):'')
-      :'<b>'+esc(opName(x))+'</b>'+(x["Licence Number"]?' · '+esc(x["Licence Number"]):'');
+      :phSm(x._i)+'<b>'+esc(opName(x))+'</b>'+(x["Licence Number"]?' · '+esc(x["Licence Number"]):'');
     var sub=side==="o"?'Owner: '+esc(ownerName(x)):esc(x["Business Name"]||"");
     return '<div class="lkopt'+(on?' off':'')+'"'+(on?'':' onclick="lkAdd(\''+side+'\','+i+','+x._i+')"')+'>'+top+
       '<div class="faintx">'+sub+(on?(sub?' · ':'')+'already linked':'')+'</div></div>';
@@ -2747,8 +2759,25 @@ function phWipe(){
     try{indexedDB.deleteDatabase("pvh_photos");}catch(e){}
   });
   Array.prototype.forEach.call(document.querySelectorAll(".opdot img.ph"),function(im){im.remove();});
-  Array.prototype.forEach.call(document.querySelectorAll(".opdot[data-phs]"),function(el){el.removeAttribute("data-phs");});
+  Array.prototype.forEach.call(document.querySelectorAll(".opdot[data-phs]"),function(el){el.removeAttribute("data-phs"); el.classList.remove("has");});
+  phZoomClose();
 }
+function phZoomClose(){
+  Array.prototype.forEach.call(document.querySelectorAll(".phzoom"),function(z){z.remove();});
+}
+/* Tap a record's photo to see it larger; tap anywhere or press Escape to close. */
+function phZoom(el){
+  var im=el.querySelector("img.ph.on"); if(!im)return;
+  phZoomClose();
+  var d=document.createElement("div"); d.className="phzoom"; d.setAttribute("role","dialog");
+  d.setAttribute("aria-modal","true"); d.setAttribute("aria-label","Photo");
+  var z=new Image(); z.alt=""; z.src=im.src; d.appendChild(z);
+  d.addEventListener("click",phZoomClose);
+  document.body.appendChild(d);
+}
+function opInit(o){return ((o["First Name"]||" ")[0]+(o["Last Name"]||" ")[0]).toUpperCase();}
+/* A small tile for a driver named in a line of text; opts in like any circle. */
+function phSm(i){return phAttr(i)?'<span class="opdot sm"'+phAttr(i)+'>'+esc(opInit(O[i]))+'</span>':"";}
 /* Same sign-in handling as shApi, for a binary answer. */
 function shBin(path){
   if(!AU||AU.dead)return Promise.reject({auth:true});
@@ -2795,7 +2824,7 @@ function phHydrate(el){
     return phLoad(id).then(function(u){
       if(!u||!el.isConnected||el.querySelector("img.ph"))return;
       var im=new Image(); im.className="ph"; im.alt=""; im.decoding="async";
-      im.onload=function(){im.classList.add("on");};
+      im.onload=function(){im.classList.add("on"); el.classList.add("has");};
       im.onerror=function(){im.remove();};
       im.src=u; el.appendChild(im);
     });
@@ -2817,9 +2846,14 @@ function phKick(){
   Array.prototype.forEach.call(document.querySelectorAll('.opdot[data-phs="w"]'),function(el){el.removeAttribute("data-phs");});
   phScan();
 }
-window.__phScan=phScan; window.__phKick=phKick;
+window.__phScan=phScan; window.__phKick=phKick; window.__phZoom=phZoom; window.__phZoomClose=phZoomClose;
 if(!window.__phWired){
   window.__phWired=true;
+  document.addEventListener("click",function(e){
+    var t=e.target&&e.target.closest?e.target.closest(".dhead .opdot.has"):null;
+    if(t&&window.__phZoom)window.__phZoom(t);
+  });
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"&&window.__phZoomClose)window.__phZoomClose();});
   /* Cards and records are drawn as text, so watch for new circles instead of
      hooking every place that draws one. */
   new MutationObserver(function(){
@@ -3280,7 +3314,7 @@ function renderOperator(i){
     '&#9733; OWNER-OPERATOR &mdash; also registered as vehicle owner</div>';
   if(flag) h+='<div class="alertbar">&#9888; Licence flagged '+
     (o["Cancelled"]===true?'CANCELLED':'INACTIVE')+' in system</div>';
-  h+='<div class="dhead"><div class="dtop"><div class="opdot"'+phAttr(o._i)+' style="flex:0 0 66px;height:66px;font-size:22px">'+
+  h+='<div class="dhead"><div class="dtop"><div class="opdot"'+phAttr(o._i)+'>'+
     esc(((o["First Name"]||" ")[0]+(o["Last Name"]||" ")[0]).toUpperCase())+'</div>'+
     '<div><div class="dtitle">'+esc(opName(o))+'</div>'+
     '<div class="dsub">'+dash(o["Business Name"])+' \u00B7 <span class="chip t-'+esc(o["Operator Type"])+'">'+
@@ -3332,7 +3366,7 @@ function renderOwner(i){
   const priorW=visitOpen(clKeyW(w),ownerName(w));
   const op=(w._op!=null)?O[w._op]:null;
   let h='<div class="dhead"><div class="dtop">'+
-    '<div class="opdot"'+phAttr(w._op)+' style="flex:0 0 66px;height:66px;font-size:22px">'+
+    '<div class="opdot"'+phAttr(w._op)+'>'+
     esc(((w["Owner First Name"]||" ")[0]+(w["Owner Last Name"]||" ")[0]).toUpperCase())+'</div>'+
     '<div><div class="dtitle">'+esc(ownerName(w))+'</div>'+
     '<div class="dsub">'+dash(w["Business Name"])+' &middot; <span class="chip" style="background:var(--panel2);color:var(--dim)">OWNER</span>'+

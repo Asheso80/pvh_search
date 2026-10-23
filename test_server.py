@@ -157,6 +157,7 @@ def cartoon_face(i):
         d.ellipse((x - 5, 62, x + 5, 70), fill="white")
         d.ellipse((x - 2, 63, x + 2, 69), fill=(30, 30, 30))   # eyes
     d.arc((46, 76, 74, 96), 20, 160, fill=(120, 40, 40), width=2)   # smile
+    im = im.resize((172, 226), Image.LANCZOS)   # the real thumbnails are 172x226
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=85)
     return buf.getvalue()
