@@ -271,6 +271,13 @@ create table if not exists public.links (
 create index if not exists links_op_idx on public.links (op_key);
 create index if not exists links_veh_idx on public.links (veh_key);
 create index if not exists links_updated_idx on public.links (updated_at);
+-- One row per pair: the id is made from the two record keys (006_link_guards.sql).
+alter table public.links drop constraint if exists links_id_shape;
+alter table public.links add constraint links_id_shape check (
+  op_key like 'o:%' and veh_key like 'v:%'
+  and position('|' in op_key) = 0 and position('|' in veh_key) = 0
+  and id = 'l|' || op_key || '|' || veh_key
+) not valid;
 alter table public.links enable row level security;
 
 drop policy if exists links_read   on public.links;
@@ -319,18 +326,22 @@ begin
     new.updated_by   := auth.uid();
     new.updated_name := who;
   else
-    -- Fixed for good once written (the labels may follow a renamed record).
+    -- Fixed for good once written.
     if new.id <> old.id or new.op_key <> old.op_key or new.veh_key <> old.veh_key then
       raise exception 'That part of a link cannot be changed';
     end if;
     new.created_at   := old.created_at;
     new.created_by   := old.created_by;
     new.created_name := old.created_name;
+    -- Labels may follow a renamed record, but only on an add or removal, which
+    -- link_events records with the new labels and who made the change.
     if new.active is distinct from old.active then
       new.updated_at   := now();
       new.updated_by   := auth.uid();
       new.updated_name := who;
     else
+      new.op_label     := old.op_label;
+      new.veh_label    := old.veh_label;
       new.updated_at   := old.updated_at;
       new.updated_by   := old.updated_by;
       new.updated_name := old.updated_name;
