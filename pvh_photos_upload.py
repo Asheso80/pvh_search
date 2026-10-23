@@ -3,8 +3,14 @@
 PC only. Run it yourself; it is never part of the daily build.
 
     python pvh_photos_upload.py "D:\\path\\to\\Operator Thumbs"            # upload what is missing
+    python pvh_photos_upload.py "D:\\path\\to\\Operator Thumbs" --changed  # missing, plus any whose picture has changed
     python pvh_photos_upload.py "D:\\path\\to\\Operator Thumbs" --check    # look at the folder, no sign-in, no upload
-    python pvh_photos_upload.py "D:\\path\\to\\Operator Thumbs" --replace  # overwrite photos already uploaded
+    python pvh_photos_upload.py "D:\\path\\to\\Operator Thumbs" --replace  # overwrite every photo, changed or not
+
+--changed is the one to use after a renewal or a retake: the file name of a person's thumbnail never
+changes, so the plain run skips it. This compares each local file with what the bucket holds (its
+checksum where the bucket reports one, otherwise its size) and sends only the new and altered ones.
+Phones notice the change by themselves the next time they are online and signed in.
 
 Signs in as you (the account listed in `photo_admins`, see supabase/007_photos.sql) with the
 project URL and anon key from pvh_local_config.json, exactly as pvh_intel.py does. The email is
@@ -17,6 +23,7 @@ information: this script refuses a folder inside the repo, so they cannot be com
 Prints counts only, never names.
 """
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -92,7 +99,8 @@ def sign_in(cfg):
 
 
 def remote_names(url, key, token):
-    names, off = set(), 0
+    """Every object in the bucket: {name: the listing entry, with its checksum and size under 'metadata'}."""
+    names, off = {}, 0
     while True:
         st, page = http("POST", url + "/storage/v1/object/list/" + BUCKET, key, token,
                         body={"prefix": "", "limit": 1000, "offset": off,
@@ -100,10 +108,23 @@ def remote_names(url, key, token):
         if st != 200 or not isinstance(page, list):
             sys.exit("Could not list the bucket: HTTP " + str(st) + " " + s_(page)
                      + "\n(Has supabase/007_photos.sql been run, and is this account in photo_admins?)")
-        names.update(p["name"] for p in page if p.get("name"))
+        names.update({p["name"]: p for p in page if p.get("name")})
         if len(page) < 1000:
             return names
         off += 1000
+
+
+def same_as_remote(folder, name, entry):
+    """True when the bucket already holds exactly this file. Uses the checksum the bucket reports (the
+    MD5 of a single-part upload) when there is one, else the size. With neither, assume it differs."""
+    with open(os.path.join(folder, name), "rb") as fh:
+        raw = fh.read()
+    meta = (entry or {}).get("metadata") or {}
+    etag = s_(meta.get("eTag") or meta.get("etag")).strip('"')
+    if re.fullmatch(r"[0-9a-f]{32}", etag):
+        return hashlib.md5(raw).hexdigest() == etag
+    size = meta.get("size", meta.get("contentLength"))
+    return size is not None and int(size) == len(raw)
 
 
 def upload(url, key, token, folder, name, replace):
@@ -131,7 +152,7 @@ def upload(url, key, token, folder, name, replace):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
-    if len(args) != 1 or flags - {"--check", "--replace"}:
+    if len(args) != 1 or flags - {"--check", "--replace", "--changed"} or {"--replace", "--changed"} <= flags:
         sys.exit(__doc__)
     folder = os.path.abspath(args[0])
     if not os.path.isdir(folder):
@@ -148,21 +169,29 @@ def main():
         sys.exit("Could not read pvh_local_config.json.")
     url, key, token = sign_in(cfg)
     have = remote_names(url, key, token)
-    todo = files if "--replace" in flags else [n for n in files if n not in have]
-    present = len(have & set(files)) if "--replace" not in flags else 0
-    print("Already in the bucket: %d. To upload: %d." % (len(have & set(files)), len(todo)))
-    done = failed = 0
+    if "--replace" in flags:
+        todo = files
+    elif "--changed" in flags:
+        todo = [n for n in files if n not in have or not same_as_remote(folder, n, have[n])]
+    else:
+        todo = [n for n in files if n not in have]
+    new = [n for n in todo if n not in have]
+    print("In the bucket already: %d. New: %d. Changed (replacing): %d. Unchanged, skipped: %d."
+          % (len(set(have) & set(files)), len(new), len(todo) - len(new), len(files) - len(todo)))
+    done = done_new = failed = 0
     for i, n in enumerate(todo, 1):
-        r = upload(url, key, token, folder, n, "--replace" in flags)
+        r = upload(url, key, token, folder, n, n in have)     # overwrite only a photo that is already there
         if r in ("uploaded", "exists"):
             done += 1
+            done_new += n not in have
         else:
             failed += 1
             print("  " + n + " -> " + r)
         if i % 50 == 0:
             print("  %d / %d" % (i, len(todo)))
-    orphans = len(have - set(files))
-    print("Done. In the bucket now: %d of %d. Uploaded this run: %d. Failed: %d." % (present + done, len(files), done, failed))
+    orphans = len(set(have) - set(files))
+    print("Done. In the bucket now: %d of %d. Sent this run: %d. Failed: %d."
+          % (len(set(have) & set(files)) + done_new, len(files), done, failed))
     if orphans:
         print("%d photo(s) in the bucket have no file in this folder (left alone)." % orphans)
     if failed:

@@ -145,6 +145,26 @@ on conflict do nothing;
 - To cut one person off from the photos, delete their `profiles` row -- the same
   as for notes.
 
+### Adding or replacing photos later
+
+The app asks the bucket for a person's photo by name, so a new photo needs no app
+change and no push -- only an upload. The scans, the matching and the thumbnail
+scripts live outside this repo (they handle personal information); the upload
+script is here.
+
+- `python pvh_photos_upload.py "<thumbnail folder>"` sends the photos that are
+  missing from the bucket.
+- `python pvh_photos_upload.py "<thumbnail folder>" --changed` also replaces any
+  whose picture has changed (a renewal or retake). A person's thumbnail keeps its
+  name when it is replaced, so the plain run would skip it. It compares each file
+  with the bucket's checksum (or size) and sends only the new and altered ones.
+  `--replace` sends everything regardless.
+- Phones notice a replaced photo by themselves: when an officer is signed in and
+  online, the app asks the bucket for the most recently changed photos (newest
+  first, a handful of entries) and forgets just those on the device. The first
+  check on a device, or a burst of more than about a thousand changes, clears the
+  device's saved photos once; they refetch as they are viewed.
+
 ## Reset an officer's password
 
 Officer logins need not be real mailboxes, so the dashboard's emailed reset link

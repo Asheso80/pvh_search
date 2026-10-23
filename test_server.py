@@ -164,11 +164,29 @@ def cartoon_face(i):
 
 
 PHOTOS = {}
+PHOTO_TIMES = {}   # file name -> updated_at, as the bucket's listing reports it
+FAKE_NAMES = []    # extra listing entries, to test a burst of changes (/__test/fake_changes)
 
 
 def make_photos():
     for i in range(3):
-        PHOTOS[photo_id("ZZTEST00000%d" % i) + ".jpg"] = cartoon_face(i)
+        name = photo_id("ZZTEST00000%d" % i) + ".jpg"
+        PHOTOS[name] = cartoon_face(i)
+        PHOTO_TIMES[name] = ago(2)
+
+
+def photo_listing(body):
+    """What POST /storage/v1/object/list/operator-photos answers: newest first when asked, paged."""
+    entries = [{"name": n, "id": str(uuid.uuid5(uuid.NAMESPACE_URL, n)), "updated_at": PHOTO_TIMES[n],
+                "created_at": PHOTO_TIMES[n], "metadata": {"size": len(PHOTOS[n]), "mimetype": "image/jpeg"}}
+               for n in PHOTOS]
+    entries += [{"name": n, "id": str(uuid.uuid5(uuid.NAMESPACE_URL, n)), "updated_at": t, "created_at": t,
+                 "metadata": {"size": 5000, "mimetype": "image/jpeg"}} for n, t in FAKE_NAMES]
+    sort = (body or {}).get("sortBy") or {}
+    key = sort.get("column", "name")
+    entries.sort(key=lambda e: e.get(key) or "", reverse=sort.get("order") == "desc")
+    off, lim = int((body or {}).get("offset") or 0), int((body or {}).get("limit") or 100)
+    return entries[off:off + lim]
 
 
 # ------------------------------------------------------- pretend shared notes
@@ -319,6 +337,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, app_html().encode("utf-8"), "text/html; charset=utf-8")
         if path == "/__test/photo_hits":
             return self.send(200, PHOTO_HITS)
+        if path == "/__test/replace_photo":      # a renewal: a different face, a new timestamp, the same name
+            name = query.get("name", [""])[0]
+            if name not in PHOTOS:
+                return self.send(404, {"message": "no such photo"})
+            PHOTOS[name] = cartoon_face(list(PHOTOS).index(name) + 1)
+            PHOTO_TIMES[name] = now()
+            return self.send(200, {"replaced": name, "size": len(PHOTOS[name])})
+        if path == "/__test/fake_changes":       # a burst: n extra photos all changed just now
+            for k in range(int(query.get("n", ["60"])[0])):
+                FAKE_NAMES.append(("%024x" % (0xAB0000 + k) + ".jpg", now()))
+            return self.send(200, {"fake_entries": len(FAKE_NAMES)})
         if path.startswith("/storage/v1/object/authenticated/operator-photos/"):
             if not self.signed_in():
                 return self.send(400, {"statusCode": "400", "error": "Unauthorized", "message": "Invalid JWT"})
@@ -354,6 +383,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(400, {"error_description": "Invalid login credentials"})
         if path == "/auth/v1/logout":
             return self.send(204)
+        if path == "/storage/v1/object/list/operator-photos":
+            if not self.signed_in():
+                return self.send(400, {"statusCode": "400", "error": "Unauthorized", "message": "Invalid JWT"})
+            return self.send(200, photo_listing(b))
         t = self.table(path)
         uid = self.signed_in()
         if not t or t in ("profiles", "note_events", "link_events"):

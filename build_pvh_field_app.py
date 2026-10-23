@@ -2672,7 +2672,7 @@ function renderShared(){
     msg.textContent="Signing in…";
     shSignIn(em,pw.value).then(function(a){
       if(AU&&AU.uid&&AU.uid!==a.uid){OB=[]; obSave(); SC=emptySC(); scSave(); phWipe();}
-      AU=a; auSave(); NIDX=null; pw.value=""; phKick();
+      AU=a; auSave(); NIDX=null; pw.value=""; phKick(); phSync(true);
       shSync(true); renderShared();
     }).catch(function(e){
       msg.textContent=(e&&e.pin)?PIN_MSG:(e&&e.net)?"No connection. Signing in needs a signal.":((e&&e.message)||"Could not sign in.");
@@ -2718,7 +2718,7 @@ function shDiscard(){
    out, or a different officer signing in, wipes them. No photo, no sign-in or no
    signal: the initials stay, exactly as before. A circle opts in with data-pho,
    the operator's index in O (phAttr); owners use their linked operator. */
-var PH={url:{},none:{},p:{}}, PH_DBP=null, PH_IO=null;
+var PH={url:{},none:{},p:{},gen:0}, PH_DBP=null, PH_IO=null, PH_SEEN_KEY="pvh_photo_seen", PH_SYNC={busy:false,last:0};
 function phAttr(i){return (typeof i==="number"&&O[i])?' data-pho="'+i+'"':"";}
 function phId(o){
   if(!(window.crypto&&crypto.subtle&&window.TextEncoder))return Promise.resolve(null);
@@ -2750,9 +2750,10 @@ function phGet(id){
 function phPut(id,blob){
   phDb().then(function(db){if(!db)return; try{db.transaction("p","readwrite").objectStore("p").put(blob,id);}catch(e){}});
 }
-function phWipe(){
+/* Forget every photo held on this device (memory and IndexedDB). */
+function phClear(){
   Object.keys(PH.url).forEach(function(k){try{URL.revokeObjectURL(PH.url[k]);}catch(e){}});
-  PH.url={}; PH.none={}; PH.p={};
+  PH.url={}; PH.none={}; PH.p={}; PH.gen++;   /* a load already under way is out of date: see phLoad, phHydrate */
   var open=PH_DBP||Promise.resolve(null); PH_DBP=null;
   open.then(function(db){
     if(db)try{db.close();}catch(e){}
@@ -2760,6 +2761,12 @@ function phWipe(){
   });
   Array.prototype.forEach.call(document.querySelectorAll(".opdot img.ph"),function(im){im.remove();});
   Array.prototype.forEach.call(document.querySelectorAll(".opdot[data-phs]"),function(el){el.removeAttribute("data-phs"); el.classList.remove("has");});
+  setTimeout(phScan,0);
+}
+/* Sign-out or a different officer: as above, and the "what changed" marker goes too. */
+function phWipe(){
+  phClear();
+  try{localStorage.removeItem(PH_SEEN_KEY);}catch(e){}
   phZoomClose();
 }
 function phZoomClose(){
@@ -2802,6 +2809,7 @@ function phLoad(id){
   if(PH.url[id])return Promise.resolve(PH.url[id]);
   if(PH.none[id])return Promise.resolve(null);
   if(PH.p[id])return PH.p[id];
+  var g0=PH.gen;
   var p=phGet(id).then(function(b){
     if(b)return b;
     return shBin("/storage/v1/object/authenticated/operator-photos/"+id+".jpg").then(function(r){
@@ -2811,7 +2819,7 @@ function phLoad(id){
     });
   }).then(function(b){
     delete PH.p[id];
-    if(!b)return null;
+    if(!b||g0!==PH.gen)return null;     /* nothing, or read before a clear: not to be trusted */
     PH.url[id]=URL.createObjectURL(b); return PH.url[id];
   },function(e){delete PH.p[id]; throw e;});
   PH.p[id]=p; return p;
@@ -2819,9 +2827,11 @@ function phLoad(id){
 function phHydrate(el){
   var o=O[+el.getAttribute("data-pho")];
   if(!o||!SH||!shSigned()||AU.dead){el.setAttribute("data-phs","w"); return;}   /* waiting for a sign-in */
+  var g=PH.gen;
   phId(o).then(function(id){
     if(!id)return;
     return phLoad(id).then(function(u){
+      if(g!==PH.gen){el.removeAttribute("data-phs"); phScan(); return;}   /* the cache was cleared meanwhile: ask again */
       if(!u||!el.isConnected||el.querySelector("img.ph"))return;
       var im=new Image(); im.className="ph"; im.alt=""; im.decoding="async";
       im.onload=function(){im.classList.add("on"); el.classList.add("has");};
@@ -2846,9 +2856,74 @@ function phKick(){
   Array.prototype.forEach.call(document.querySelectorAll('.opdot[data-phs="w"]'),function(el){el.removeAttribute("data-phs");});
   phScan();
 }
+/* A person's thumbnail keeps its name when it is replaced, so a phone that already
+   holds one would show the old face for ever. Now and then (signed in, with a
+   signal) ask the bucket for the photos changed most recently -- newest first, so
+   it is a handful of entries -- and forget those on this device; the next look
+   fetches the new one, and a circle on screen swaps at once. The first check on a
+   device only clears what it holds and notes the time. */
+function phForget(ids){
+  var set={}; PH.gen++;
+  ids.forEach(function(i){
+    set[i]=1; delete PH.none[i]; delete PH.p[i];
+    if(PH.url[i]){try{URL.revokeObjectURL(PH.url[i]);}catch(e){} delete PH.url[i];}
+  });
+  phDb().then(function(db){
+    if(!db)return;
+    try{var s=db.transaction("p","readwrite").objectStore("p"); ids.forEach(function(i){s.delete(i);});}catch(e){}
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".opdot[data-pho]"),function(el){
+    var o=O[+el.getAttribute("data-pho")]; if(!o)return;
+    phId(o).then(function(id){
+      if(!id||!set[id])return;
+      var im=el.querySelector("img.ph"); if(im)im.remove();
+      el.classList.remove("has"); el.removeAttribute("data-phs"); phScan();
+    });
+  });
+  phZoomClose();
+}
+function phSync(force){
+  if(PH_SYNC.busy||!SH||!shSigned()||AU.dead)return;
+  if(!force&&Date.now()-PH_SYNC.last<6*3600*1000)return;
+  PH_SYNC.busy=true;
+  /* The marker is the newest change time seen and which photos had exactly that time,
+     so a photo changed in the same second as the last look is still noticed once. */
+  var seen=jget(PH_SEEN_KEY,null), since=(seen&&typeof seen.t==="number")?seen.t:null;
+  var done=(seen&&Array.isArray(seen.n))?seen.n:[];
+  var newest=0, atNewest=[], hit=[], flood=false;
+  function page(off){
+    return shApi("POST","/storage/v1/object/list/operator-photos",
+        {prefix:"",limit:50,offset:off,sortBy:{column:"updated_at",order:"desc"}}).then(function(r){
+      if(r.status!==200||!Array.isArray(r.json))throw {bad:true};
+      var more=r.json.length===50&&since!==null;
+      r.json.forEach(function(e){
+        var t=tsParse(e.updated_at||e.created_at), nm=String(e.name||"").slice(0,24);
+        if(t>newest){newest=t; atNewest=[nm];} else if(t===newest)atNewest.push(nm);
+        if(since!==null&&/^[0-9a-f]{24}\.jpg$/.test(e.name||"")&&(t>since||(t===since&&done.indexOf(nm)<0)))hit.push(nm);
+        if(since!==null&&t<since)more=false;
+      });
+      if(!more)return null;
+      if(off>=950){flood=true; return null;}
+      return page(off+50);
+    });
+  }
+  page(0).then(function(){
+    if(!newest){jset(PH_SEEN_KEY,{t:1,n:[]});}          /* no usable times from the server: stop asking to clear */
+    else{
+      if(since===null||flood)phClear();                  /* nothing noted yet, or too many changed to list */
+      else if(hit.length)phForget(hit);
+      var n=newest>(since||0)?atNewest:done.concat(atNewest.filter(function(x){return done.indexOf(x)<0;}));
+      jset(PH_SEEN_KEY,{t:Math.max(newest,since||0),n:n.slice(0,200)});
+    }
+    PH_SYNC.last=Date.now();
+  }).catch(function(){}).then(function(){PH_SYNC.busy=false;});
+}
 window.__phScan=phScan; window.__phKick=phKick; window.__phZoom=phZoom; window.__phZoomClose=phZoomClose;
+window.__phSync=phSync;
 if(!window.__phWired){
   window.__phWired=true;
+  document.addEventListener("visibilitychange",function(){
+    if(document.visibilityState==="visible"&&window.__phSync)window.__phSync(false);});
   document.addEventListener("click",function(e){
     var t=e.target&&e.target.closest?e.target.closest(".dhead .opdot.has"):null;
     if(t&&window.__phZoom)window.__phZoom(t);
@@ -2860,9 +2935,10 @@ if(!window.__phWired){
     if(window.__phT)return;
     window.__phT=setTimeout(function(){window.__phT=0; if(window.__phScan)window.__phScan();},60);
   }).observe(document.documentElement,{childList:true,subtree:true});
-  window.addEventListener("online",function(){if(window.__phKick)window.__phKick();});
+  window.addEventListener("online",function(){if(window.__phKick)window.__phKick(); if(window.__phSync)window.__phSync(true);});
 }
 setTimeout(phScan,0);
+setTimeout(function(){phSync(true);},2500);
 /* One set of listeners for the life of the page, however many times boot()
    runs, always pointing at the latest closure. */
 window.__shTick=function(){shSync(false);};
