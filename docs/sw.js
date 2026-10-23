@@ -1,4 +1,4 @@
-const C="pvh-shell-a61e34b9", G="pvh-geo-626ed5c1";
+const C="pvh-shell-8cddc8fe", G="pvh-geo-626ed5c1";
 /* geo.bin is public map data, held in its own cache so a shell update does not
    re-download it. It is fetched at install so location works offline. */
 self.addEventListener("install",e=>{e.waitUntil(Promise.all([
@@ -23,11 +23,14 @@ self.addEventListener("fetch",e=>{
   /* The page itself is network-first: a redeployed app is picked up on the next
      launch that has a signal, instead of the cached copy being served forever.
      The cache is the fallback, so offline still works, and a 3s cap means a
-     flaky connection in the field falls back rather than hanging. */
+     flaky connection in the field falls back rather than hanging. Only a good
+     answer replaces the saved copy: an error page from the host (a GitHub
+     outage, say) is never kept, and the saved app is shown in its place. */
   const isPage=e.request.mode==="navigate"||/(^|\/)(index\.html)?$/.test(u.pathname);
   if(isPage){
     e.respondWith(Promise.race([
       fetch(e.request).then(res=>{
+        if(!res.ok)return caches.match("index.html",{ignoreSearch:true}).then(c=>c||res);
         const cl=res.clone();
         caches.open(C).then(c=>c.put("index.html",cl));
         return res;
@@ -37,5 +40,5 @@ self.addEventListener("fetch",e=>{
       .catch(()=>caches.match("index.html",{ignoreSearch:true})));
     return;
   }
-  e.respondWith(caches.match(e.request,{ignoreSearch:true}).then(r=>r||fetch(e.request).then(res=>{const cl=res.clone();caches.open(C).then(c=>c.put(e.request,cl));return res;}).catch(()=>caches.match("index.html"))));
+  e.respondWith(caches.match(e.request,{ignoreSearch:true}).then(r=>r||fetch(e.request).then(res=>{if(res.ok){const cl=res.clone();caches.open(C).then(c=>c.put(e.request,cl));}return res;}).catch(()=>caches.match("index.html"))));
 });

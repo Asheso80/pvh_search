@@ -1033,11 +1033,14 @@ self.addEventListener("fetch",e=>{
   /* The page itself is network-first: a redeployed app is picked up on the next
      launch that has a signal, instead of the cached copy being served forever.
      The cache is the fallback, so offline still works, and a 3s cap means a
-     flaky connection in the field falls back rather than hanging. */
+     flaky connection in the field falls back rather than hanging. Only a good
+     answer replaces the saved copy: an error page from the host (a GitHub
+     outage, say) is never kept, and the saved app is shown in its place. */
   const isPage=e.request.mode==="navigate"||/(^|\/)(index\.html)?$/.test(u.pathname);
   if(isPage){
     e.respondWith(Promise.race([
       fetch(e.request).then(res=>{
+        if(!res.ok)return caches.match("index.html",{ignoreSearch:true}).then(c=>c||res);
         const cl=res.clone();
         caches.open(C).then(c=>c.put("index.html",cl));
         return res;
@@ -1047,7 +1050,7 @@ self.addEventListener("fetch",e=>{
       .catch(()=>caches.match("index.html",{ignoreSearch:true})));
     return;
   }
-  e.respondWith(caches.match(e.request,{ignoreSearch:true}).then(r=>r||fetch(e.request).then(res=>{const cl=res.clone();caches.open(C).then(c=>c.put(e.request,cl));return res;}).catch(()=>caches.match("index.html"))));
+  e.respondWith(caches.match(e.request,{ignoreSearch:true}).then(r=>r||fetch(e.request).then(res=>{if(res.ok){const cl=res.clone();caches.open(C).then(c=>c.put(e.request,cl));}return res;}).catch(()=>caches.match("index.html"))));
 });"""
 
 
@@ -1673,7 +1676,12 @@ function status(label,dateStr){
 
 /* ---------- rendering ---------- */
 const main=document.getElementById("main");
-const esc=s=>(s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+/* Quotes too, so text is safe inside an attribute value as well as between tags. */
+const esc=s=>(s==null?"":String(s)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+/* Text as a '...' argument inside an onclick="..." attribute: made safe for the
+   script first, then for the attribute, which the browser undoes before running it. */
+const jsArg=s=>esc(String(s==null?"":s).replace(/\\/g,"\\\\").replace(/'/g,"\\'").replace(/[\r\n]+/g," "));
 const dash=s=>(s==null||s==="")?"\u2014":esc(s);
 
 function deckHTML(v,big){
@@ -3063,8 +3071,7 @@ function copyField(el,text){
   else done();
 }
 function tapField(text){
-  const t=esc(text);
-  return '<span class="tap" onclick="copyField(this,\''+t.replace(/'/g,"\\'")+'\')">'+t+'</span>';
+  return '<span class="tap" onclick="copyField(this,\''+jsArg(text)+'\')">'+esc(text)+'</span>';
 }
 function telLink(p){
   if(!p) return "\u2014";
@@ -3087,7 +3094,7 @@ function renderVehicle(i){
     '<div><div class="dtitle">'+esc(v["Make Model"]||"Vehicle")+'</div>'+
     '<div class="dsub">'+dash(v["Vehicle Color"])+' \u00B7 '+dash(v["v Year"])+
     ' \u00B7 <span class="chip t-'+esc(v["Vehicle Type"])+'">'+esc(v["Vehicle Type"])+'</span></div>'+
-    (v["Plate No"]?'<div class="bigplate tap" onclick="copyField(this,\''+esc(v["Plate No"]).replace(/'/g,"\\'")+'\')">'+esc(v["Plate No"])+'</div>':'')+
+    (v["Plate No"]?'<div class="bigplate tap" onclick="copyField(this,\''+jsArg(v["Plate No"])+'\')">'+esc(v["Plate No"])+'</div>':'')+
     '</div></div><div class="badges">'+
     status("PVH License",v["Expiry Date"])+
     status("Insurance",v["Insurance Expiry"])+
