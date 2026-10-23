@@ -32,7 +32,9 @@ commit". Confirmed with the folder owner that the Dropbox destination is
 access-restricted appropriately before relying on this.
 
 Every run appends to logs\pull_and_build_YYYY-MM-DD.log so a scheduled,
-unattended run leaves a record of what happened.
+unattended run leaves a record of what happened. Those logs repeat the build's
+data warnings, which name owners and operators, so each run deletes the ones
+older than LOG_KEEP_DAYS.
 """
 
 import json
@@ -42,7 +44,7 @@ import subprocess
 import sys
 import shutil
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -59,6 +61,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent  # PVH_Search folder
 BUILD_SCRIPT = SCRIPT_DIR / "build_pvh_field_app.py"
 RELEASE_SCRIPT = SCRIPT_DIR / "release" / "build_pvh_field_app.py"
 LOG_DIR = SCRIPT_DIR / "logs"
+LOG_KEEP_DAYS = 90  # run logs older than this are deleted -- they name people
 CONFIG_FILE = SCRIPT_DIR / "pvh_local_config.json"
 
 REQUIRED_KEYS = ("server", "folder_path", "dropbox_target")
@@ -124,6 +127,22 @@ def setup_logging():
     return logging.getLogger("pull_and_build")
 
 
+def prune_logs(log):
+    """Delete run logs older than LOG_KEEP_DAYS, going by the date in the name."""
+    cutoff = datetime.now() - timedelta(days=LOG_KEEP_DAYS)
+    for path in LOG_DIR.glob("pull_and_build_*.log"):
+        try:
+            day = datetime.strptime(path.stem[len("pull_and_build_"):], "%Y-%m-%d")
+        except ValueError:
+            continue
+        if day < cutoff:
+            try:
+                path.unlink()
+                log.info(f"Deleted old log {path.name} (kept {LOG_KEEP_DAYS} days).")
+            except OSError as exc:
+                log.warning(f"Could not delete old log {path.name}: {exc}")
+
+
 def get_session() -> requests.Session:
     s = requests.Session()
     s.auth = HttpNegotiateAuth()  # uses your current Windows login
@@ -172,6 +191,7 @@ def write_source(path: Path, content: bytes) -> None:
 def main():
     log = setup_logging()
     log.info("=== Run started ===")
+    prune_logs(log)
     log.info(f"Pulling {len(REPORTS)} report(s) from {SERVER}{FOLDER_PATH} ...")
     session = get_session()
 
