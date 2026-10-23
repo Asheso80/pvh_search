@@ -1266,17 +1266,17 @@ main{flex:1;padding:10px 12px 40px}
 .deck.shuttle{border-color:var(--shuttle);color:var(--shuttle)}
 .deck span{font-size:10px;letter-spacing:.08em;font-weight:600;margin-bottom:2px}
 .deck.none{border-style:dashed;color:var(--faint);border-color:var(--line);font-size:11px}
-.opdot{flex:0 0 64px;width:64px;height:64px;border-radius:14px;background:var(--panel2);
+.opdot{flex:0 0 66px;width:66px;height:87px;border-radius:12px;background:var(--panel2);
   border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
   font-weight:700;font-size:22px;color:var(--dim);position:relative;overflow:hidden}
 /* An operator's photo sits over the initials and fades in once loaded; with no
-   photo (or no sign-in, or no signal) the initials simply stay. The photo is a
-   portrait, so the square window is anchored near the top: head and shoulders. */
+   photo (or no sign-in, or no signal) the initials simply stay. The tile has the
+   photo's own portrait shape (172x226), so nothing is cropped. */
 .opdot img.ph{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;
-  object-position:50% 8%;opacity:0;transition:opacity .2s}
+  object-position:50% 0;opacity:0;transition:opacity .2s}
 .opdot img.ph.on{opacity:1}
 /* Bigger on a record, and tap to enlarge once a photo is showing. */
-.dhead .opdot:not(.sm){flex:0 0 112px;width:112px;height:112px;border-radius:18px;font-size:34px}
+.dhead .opdot:not(.sm){flex:0 0 108px;width:108px;height:142px;border-radius:16px;font-size:34px}
 .opdot.has{cursor:zoom-in}
 .card .opdot.has{cursor:pointer}
 /* A driver named in a line of text gets a small tile beside the name. */
