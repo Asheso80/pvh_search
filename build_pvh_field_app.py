@@ -1268,7 +1268,12 @@ main{flex:1;padding:10px 12px 40px}
 .deck.none{border-style:dashed;color:var(--faint);border-color:var(--line);font-size:11px}
 .opdot{flex:0 0 52px;height:52px;border-radius:50%;background:var(--panel2);
   border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
-  font-weight:700;font-size:18px;color:var(--dim)}
+  font-weight:700;font-size:18px;color:var(--dim);position:relative;overflow:hidden}
+/* An operator's photo sits over the initials and fades in once loaded; with no
+   photo (or no sign-in, or no signal) the initials simply stay. */
+.opdot img.ph{position:absolute;left:0;top:0;width:100%;height:100%;object-fit:cover;
+  object-position:50% 18%;opacity:0;transition:opacity .2s}
+.opdot img.ph.on{opacity:1}
 .cmain{flex:1;min-width:0}
 .cname{font-weight:600;font-size:16px;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis}
@@ -2654,8 +2659,8 @@ function renderShared(){
     if(!em||!pw.value){msg.textContent="Enter your email and password."; return;}
     msg.textContent="Signing in…";
     shSignIn(em,pw.value).then(function(a){
-      if(AU&&AU.uid&&AU.uid!==a.uid){OB=[]; obSave(); SC=emptySC(); scSave();}
-      AU=a; auSave(); NIDX=null; pw.value="";
+      if(AU&&AU.uid&&AU.uid!==a.uid){OB=[]; obSave(); SC=emptySC(); scSave(); phWipe();}
+      AU=a; auSave(); NIDX=null; pw.value=""; phKick();
       shSync(true); renderShared();
     }).catch(function(e){
       msg.textContent=(e&&e.pin)?PIN_MSG:(e&&e.net)?"No connection. Signing in needs a signal.":((e&&e.message)||"Could not sign in.");
@@ -2672,7 +2677,7 @@ function shOut(){
       "The shared notes kept on this device are removed. They stay on the server.",
     "Sign out",function(){
     var was=AU;
-    AU=null; OB=[]; SC=emptySC(); NIDX=null;
+    AU=null; OB=[]; SC=emptySC(); NIDX=null; phWipe();
     try{localStorage.removeItem(AU_KEY); localStorage.removeItem(OB_KEY); localStorage.removeItem(SC_KEY);}catch(e){}
     renderShared();
     shEndSession(was);
@@ -2693,6 +2698,137 @@ function shEndSession(a){
 function shDiscard(){
   OB=OB.filter(function(o){return !o.failed;}); obSave(); renderShared();
 }
+/* --- operator photos. One small face thumbnail per operator lives in a private
+   Supabase bucket (supabase/007_photos.sql), named by a one-way hash of the
+   record key so a licence number never appears in a web address. Only a signed-in
+   officer can read them. A photo is fetched when its circle scrolls into view and
+   kept on this device (IndexedDB) so it shows again at once and offline. Signing
+   out, or a different officer signing in, wipes them. No photo, no sign-in or no
+   signal: the initials stay, exactly as before. A circle opts in with data-pho,
+   the operator's index in O (phAttr); owners use their linked operator. */
+var PH={url:{},none:{},p:{}}, PH_DBP=null, PH_IO=null;
+function phAttr(i){return (typeof i==="number"&&O[i])?' data-pho="'+i+'"':"";}
+function phId(o){
+  if(!(window.crypto&&crypto.subtle&&window.TextEncoder))return Promise.resolve(null);
+  return crypto.subtle.digest("SHA-256",new TextEncoder().encode("pvh-photo:"+clKey(o).slice(2))).then(function(b){
+    return Array.prototype.map.call(new Uint8Array(b).slice(0,12),function(x){return (x+256).toString(16).slice(1);}).join("");
+  },function(){return null;});
+}
+function phDb(){
+  if(PH_DBP)return PH_DBP;
+  PH_DBP=new Promise(function(res){
+    try{
+      var q=indexedDB.open("pvh_photos",1);
+      q.onupgradeneeded=function(){q.result.createObjectStore("p");};
+      q.onsuccess=function(){res(q.result);};
+      q.onerror=function(){res(null);}; q.onblocked=function(){res(null);};
+    }catch(e){res(null);}
+  });
+  return PH_DBP;
+}
+function phGet(id){
+  return phDb().then(function(db){
+    if(!db)return null;
+    return new Promise(function(res){
+      try{var r=db.transaction("p").objectStore("p").get(id); r.onsuccess=function(){res(r.result||null);}; r.onerror=function(){res(null);};}
+      catch(e){res(null);}
+    });
+  });
+}
+function phPut(id,blob){
+  phDb().then(function(db){if(!db)return; try{db.transaction("p","readwrite").objectStore("p").put(blob,id);}catch(e){}});
+}
+function phWipe(){
+  Object.keys(PH.url).forEach(function(k){try{URL.revokeObjectURL(PH.url[k]);}catch(e){}});
+  PH.url={}; PH.none={}; PH.p={};
+  var open=PH_DBP||Promise.resolve(null); PH_DBP=null;
+  open.then(function(db){
+    if(db)try{db.close();}catch(e){}
+    try{indexedDB.deleteDatabase("pvh_photos");}catch(e){}
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".opdot img.ph"),function(im){im.remove();});
+  Array.prototype.forEach.call(document.querySelectorAll(".opdot[data-phs]"),function(el){el.removeAttribute("data-phs");});
+}
+/* Same sign-in handling as shApi, for a binary answer. */
+function shBin(path){
+  if(!AU||AU.dead)return Promise.reject({auth:true});
+  function go(){
+    return shVerified().then(function(ok){
+      if(!ok)throw {pin:true};
+      return fetch(SH.url+path,{headers:{"apikey":SH.key,"Authorization":"Bearer "+AU.access},cache:"no-store"})
+        .then(function(r){return r.ok?r.blob().then(function(b){return {status:r.status,blob:b};}):{status:r.status};},
+              function(){throw {net:true};});
+    });
+  }
+  var pre=((AU.exp||0)-60<Date.now()/1000)?shRefresh():Promise.resolve(true);
+  return pre.then(function(ok){
+    if(!ok)throw {auth:true};
+    return go();
+  }).then(function(r){
+    if(r.status!==401)return r;
+    return shRefresh().then(function(ok){if(!ok)throw {auth:true}; return go();});
+  });
+}
+function phLoad(id){
+  if(PH.url[id])return Promise.resolve(PH.url[id]);
+  if(PH.none[id])return Promise.resolve(null);
+  if(PH.p[id])return PH.p[id];
+  var p=phGet(id).then(function(b){
+    if(b)return b;
+    return shBin("/storage/v1/object/authenticated/operator-photos/"+id+".jpg").then(function(r){
+      if(r.status===200&&r.blob&&r.blob.size&&/^image\//.test(r.blob.type)){phPut(id,r.blob); return r.blob;}
+      if(r.status===400||r.status===404)PH.none[id]=1;   /* Supabase says a missing object 400 or 404 */
+      return null;
+    });
+  }).then(function(b){
+    delete PH.p[id];
+    if(!b)return null;
+    PH.url[id]=URL.createObjectURL(b); return PH.url[id];
+  },function(e){delete PH.p[id]; throw e;});
+  PH.p[id]=p; return p;
+}
+function phHydrate(el){
+  var o=O[+el.getAttribute("data-pho")];
+  if(!o||!SH||!shSigned()||AU.dead){el.setAttribute("data-phs","w"); return;}   /* waiting for a sign-in */
+  phId(o).then(function(id){
+    if(!id)return;
+    return phLoad(id).then(function(u){
+      if(!u||!el.isConnected||el.querySelector("img.ph"))return;
+      var im=new Image(); im.className="ph"; im.alt=""; im.decoding="async";
+      im.onload=function(){im.classList.add("on");};
+      im.onerror=function(){im.remove();};
+      im.src=u; el.appendChild(im);
+    });
+  }).catch(function(e){if(e&&(e.auth||e.net||e.pin))el.setAttribute("data-phs","w");});
+}
+function phScan(){
+  var els=document.querySelectorAll(".opdot[data-pho]:not([data-phs])");
+  if(!els.length)return;
+  if(!PH_IO&&window.IntersectionObserver)PH_IO=new IntersectionObserver(function(es){
+    es.forEach(function(e){if(e.isIntersecting){PH_IO.unobserve(e.target); phHydrate(e.target);}});
+  },{rootMargin:"200px"});
+  Array.prototype.forEach.call(els,function(el){
+    el.setAttribute("data-phs","1");
+    if(PH_IO)PH_IO.observe(el); else phHydrate(el);
+  });
+}
+/* After a sign-in or a regained signal: retry circles that were waiting. */
+function phKick(){
+  Array.prototype.forEach.call(document.querySelectorAll('.opdot[data-phs="w"]'),function(el){el.removeAttribute("data-phs");});
+  phScan();
+}
+window.__phScan=phScan; window.__phKick=phKick;
+if(!window.__phWired){
+  window.__phWired=true;
+  /* Cards and records are drawn as text, so watch for new circles instead of
+     hooking every place that draws one. */
+  new MutationObserver(function(){
+    if(window.__phT)return;
+    window.__phT=setTimeout(function(){window.__phT=0; if(window.__phScan)window.__phScan();},60);
+  }).observe(document.documentElement,{childList:true,subtree:true});
+  window.addEventListener("online",function(){if(window.__phKick)window.__phKick();});
+}
+setTimeout(phScan,0);
 /* One set of listeners for the life of the page, however many times boot()
    runs, always pointing at the latest closure. */
 window.__shTick=function(){shSync(false);};
@@ -2822,7 +2958,7 @@ function opCard(o,extra){
   const flag=(o["In Active"]===true||o["Cancelled"]===true);
   const ownop=(o._veh&&o._veh.length>0);
   return '<div class="card" onclick="go(\'o/'+o._i+'\')">'+
-    '<div class="opdot">'+esc(init)+'</div>'+
+    '<div class="opdot"'+phAttr(o._i)+'>'+esc(init)+'</div>'+
     '<div class="cmain"><div class="cname">'+esc(opName(o))+'</div>'+
     '<div class="csub">'+dash(o["Business Name"])+'</div>'+
     '<div class="crow2">'+(flag?'':opVerdict(o))+ntChip(clKey(o))+'<span class="chip t-'+esc(o["Operator Type"])+'">'+esc(o["Operator Type"])+' operator</span>'+
@@ -2837,7 +2973,7 @@ function ownerCard(w,extra){
   const ownop=(w._op!=null);
   const n=(w._veh||[]).length;
   return '<div class="card" onclick="go(\'w/'+w._i+'\')">'+
-    '<div class="opdot">'+esc(init)+'</div>'+
+    '<div class="opdot"'+phAttr(w._op)+'>'+esc(init)+'</div>'+
     '<div class="cmain"><div class="cname">'+esc(ownerName(w))+'</div>'+
     '<div class="csub">'+dash(w["Business Name"])+'</div>'+
     '<div class="crow2">'+ntChip(nkW(w))+'<span class="chip" style="background:var(--panel2);color:var(--dim)">OWNER</span>'+
@@ -3144,7 +3280,7 @@ function renderOperator(i){
     '&#9733; OWNER-OPERATOR &mdash; also registered as vehicle owner</div>';
   if(flag) h+='<div class="alertbar">&#9888; Licence flagged '+
     (o["Cancelled"]===true?'CANCELLED':'INACTIVE')+' in system</div>';
-  h+='<div class="dhead"><div class="dtop"><div class="opdot" style="flex:0 0 66px;height:66px;font-size:22px">'+
+  h+='<div class="dhead"><div class="dtop"><div class="opdot"'+phAttr(o._i)+' style="flex:0 0 66px;height:66px;font-size:22px">'+
     esc(((o["First Name"]||" ")[0]+(o["Last Name"]||" ")[0]).toUpperCase())+'</div>'+
     '<div><div class="dtitle">'+esc(opName(o))+'</div>'+
     '<div class="dsub">'+dash(o["Business Name"])+' \u00B7 <span class="chip t-'+esc(o["Operator Type"])+'">'+
@@ -3196,7 +3332,7 @@ function renderOwner(i){
   const priorW=visitOpen(clKeyW(w),ownerName(w));
   const op=(w._op!=null)?O[w._op]:null;
   let h='<div class="dhead"><div class="dtop">'+
-    '<div class="opdot" style="flex:0 0 66px;height:66px;font-size:22px">'+
+    '<div class="opdot"'+phAttr(w._op)+' style="flex:0 0 66px;height:66px;font-size:22px">'+
     esc(((w["Owner First Name"]||" ")[0]+(w["Owner Last Name"]||" ")[0]).toUpperCase())+'</div>'+
     '<div><div class="dtitle">'+esc(ownerName(w))+'</div>'+
     '<div class="dsub">'+dash(w["Business Name"])+' &middot; <span class="chip" style="background:var(--panel2);color:var(--dim)">OWNER</span>'+
