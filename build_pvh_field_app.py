@@ -2718,6 +2718,9 @@ function shDiscard(){
    out, or a different officer signing in, wipes them. No photo, no sign-in or no
    signal: the initials stay, exactly as before. A circle opts in with data-pho,
    the operator's index in O (phAttr); owners use their linked operator. */
+/* PH_EPOCH: raise it to make every device throw away its saved photos once (a bulk correction). 2: the first
+   withdrawn matches -- 35 photos that had been given to more than one record. */
+var PH_EPOCH=2;
 var PH={url:{},none:{},p:{},gen:0}, PH_DBP=null, PH_IO=null, PH_SEEN_KEY="pvh_photo_seen", PH_SYNC={busy:false,last:0};
 function phAttr(i){return (typeof i==="number"&&O[i])?' data-pho="'+i+'"':"";}
 function phId(o){
@@ -2888,8 +2891,10 @@ function phSync(force){
   PH_SYNC.busy=true;
   /* The marker is the newest change time seen and which photos had exactly that time,
      so a photo changed in the same second as the last look is still noticed once. */
-  var seen=jget(PH_SEEN_KEY,null), since=(seen&&typeof seen.t==="number")?seen.t:null;
-  var done=(seen&&Array.isArray(seen.n))?seen.n:[];
+  var seen=jget(PH_SEEN_KEY,null);
+  var fresh=seen&&seen.e===PH_EPOCH;                       /* a marker from an older epoch is treated as no marker */
+  var since=(fresh&&typeof seen.t==="number")?seen.t:null, lastRec=(fresh&&typeof seen.r==="number")?seen.r:0;
+  var done=(fresh&&Array.isArray(seen.n))?seen.n:[];
   var newest=0, atNewest=[], hit=[], flood=false;
   function page(off){
     return shApi("POST","/storage/v1/object/list/operator-photos",
@@ -2907,16 +2912,45 @@ function phSync(force){
       return page(off+50);
     });
   }
+  var nowS=Math.floor(Date.now()/1000), cleared=false;
   page(0).then(function(){
-    if(!newest){jset(PH_SEEN_KEY,{t:1,n:[]});}          /* no usable times from the server: stop asking to clear */
+    if(!newest){jset(PH_SEEN_KEY,{t:1,n:[],e:PH_EPOCH,r:nowS});}   /* no usable times from the server: stop asking to clear */
     else{
-      if(since===null||flood)phClear();                  /* nothing noted yet, or too many changed to list */
+      if(since===null||flood){phClear(); cleared=true;}              /* nothing noted yet, or too many changed to list */
       else if(hit.length)phForget(hit);
       var n=newest>(since||0)?atNewest:done.concat(atNewest.filter(function(x){return done.indexOf(x)<0;}));
-      jset(PH_SEEN_KEY,{t:Math.max(newest,since||0),n:n.slice(0,200)});
+      jset(PH_SEEN_KEY,{t:Math.max(newest,since||0),n:n.slice(0,200),e:PH_EPOCH,r:cleared?nowS:lastRec});
     }
     PH_SYNC.last=Date.now();
+    /* A deleted photo (a withdrawn match) never shows up in a "changed" list, so once a day compare what this
+       device holds with what the bucket still has, and drop the rest. */
+    if(newest&&!cleared&&nowS-lastRec>86400)return phReconcile().then(function(){
+      var m=jget(PH_SEEN_KEY,null); if(m){m.r=nowS; jset(PH_SEEN_KEY,m);}
+    });
   }).catch(function(){}).then(function(){PH_SYNC.busy=false;});
+}
+function phReconcile(){
+  var have={};
+  function pg(off){
+    return shApi("POST","/storage/v1/object/list/operator-photos",
+        {prefix:"",limit:1000,offset:off,sortBy:{column:"name",order:"asc"}}).then(function(r){
+      if(r.status!==200||!Array.isArray(r.json))throw {bad:true};
+      r.json.forEach(function(e){var nm=String(e.name||""); if(/^[0-9a-f]{24}\.jpg$/.test(nm))have[nm.slice(0,24)]=1;});
+      return r.json.length===1000?pg(off+1000):null;
+    });
+  }
+  return pg(0).then(function(){
+    if(!Object.keys(have).length)return [];                 /* an empty answer must never wipe the device */
+    return phDb().then(function(db){
+      if(!db)return [];
+      return new Promise(function(res){
+        try{var q=db.transaction("p").objectStore("p").getAllKeys(); q.onsuccess=function(){res(q.result||[]);}; q.onerror=function(){res([]);};}
+        catch(e){res([]);}
+      });
+    }).then(function(ids){
+      return ids.concat(Object.keys(PH.url)).filter(function(i,ix,a){return a.indexOf(i)===ix&&!have[i];});
+    });
+  }).then(function(gone){if(gone.length)phForget(gone);});
 }
 window.__phScan=phScan; window.__phKick=phKick; window.__phZoom=phZoom; window.__phZoomClose=phZoomClose;
 window.__phSync=phSync;

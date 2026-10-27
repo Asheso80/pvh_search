@@ -344,6 +344,13 @@ class Handler(BaseHTTPRequestHandler):
             PHOTOS[name] = cartoon_face(list(PHOTOS).index(name) + 1)
             PHOTO_TIMES[name] = now()
             return self.send(200, {"replaced": name, "size": len(PHOTOS[name])})
+        if path == "/__test/delete_photo":       # a withdrawn match: the photo is removed from the bucket
+            name = query.get("name", [""])[0]
+            if name not in PHOTOS:
+                return self.send(404, {"message": "no such photo"})
+            del PHOTOS[name]
+            PHOTO_TIMES.pop(name, None)
+            return self.send(200, {"deleted": name, "left": len(PHOTOS)})
         if path == "/__test/fake_changes":       # a burst: n extra photos all changed just now
             for k in range(int(query.get("n", ["60"])[0])):
                 FAKE_NAMES.append(("%024x" % (0xAB0000 + k) + ".jpg", now()))

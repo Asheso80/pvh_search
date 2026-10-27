@@ -7,6 +7,12 @@ PC only. Run it yourself; it is never part of the daily build.
     python pvh_photos_upload.py "D:\\path\\to\\Operator Thumbs" --check    # look at the folder, no sign-in, no upload
     python pvh_photos_upload.py "D:\\path\\to\\Operator Thumbs" --replace  # overwrite every photo, changed or not
 
+    python pvh_photos_upload.py "D:\\path\\to\\Operator Thumbs" --changed --prune  # ...and delete bucket photos with no local file
+
+--prune removes photos from the bucket that have no file in the folder -- for a person whose photo was withdrawn
+(a wrong match). It lists how many, asks you to type DELETE, and refuses if the folder holds fewer than half as many
+photos as the bucket (a sign the wrong folder was given). Without --prune, such photos are left alone.
+
 --changed is the one to use after a renewal or a retake: the file name of a person's thumbnail never
 changes, so the plain run skips it. This compares each local file with what the bucket holds (its
 checksum where the bucket reports one, otherwise its size) and sends only the new and altered ones.
@@ -152,7 +158,7 @@ def upload(url, key, token, folder, name, replace):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     flags = {a for a in sys.argv[1:] if a.startswith("--")}
-    if len(args) != 1 or flags - {"--check", "--replace", "--changed"} or {"--replace", "--changed"} <= flags:
+    if len(args) != 1 or flags - {"--check", "--replace", "--changed", "--prune"} or {"--replace", "--changed"} <= flags:
         sys.exit(__doc__)
     folder = os.path.abspath(args[0])
     if not os.path.isdir(folder):
@@ -189,12 +195,37 @@ def main():
             print("  " + n + " -> " + r)
         if i % 50 == 0:
             print("  %d / %d" % (i, len(todo)))
-    orphans = len(set(have) - set(files))
+    orphan_names = sorted(n for n in set(have) - set(files) if NAME_RE.match(n))
     print("Done. In the bucket now: %d of %d. Sent this run: %d. Failed: %d."
           % (len(set(have) & set(files)) + done_new, len(files), done, failed))
-    if orphans:
-        print("%d photo(s) in the bucket have no file in this folder (left alone)." % orphans)
     if failed:
+        sys.exit(1)
+    if orphan_names and "--prune" not in flags:
+        print("%d photo(s) in the bucket have no file in this folder (left alone; use --prune to delete them)."
+              % len(orphan_names))
+    elif orphan_names:
+        prune(url, key, token, orphan_names, len(files), len(have))
+
+
+def prune(url, key, token, names, n_local, n_remote):
+    if n_local * 2 < n_remote:
+        sys.exit("Refusing to prune: this folder holds %d photos but the bucket holds %d. Is it the right folder?"
+                 % (n_local, n_remote))
+    print("\n%d photo(s) in the bucket have no file in this folder and would be DELETED from the bucket." % len(names))
+    if input("Type DELETE to remove them (anything else cancels): ").strip() != "DELETE":
+        print("Cancelled. Nothing was deleted.")
+        return
+    gone = 0
+    for i in range(0, len(names), 100):
+        chunk = names[i:i + 100]
+        st, j = http("DELETE", url + "/storage/v1/object/" + BUCKET, key, token, body={"prefixes": chunk})
+        if st == 200:
+            gone += len(chunk)
+        else:
+            print("  delete failed: HTTP %d %s" % (st, s_((j or {}).get("message") or j)))
+            break
+    print("Deleted %d photo(s) from the bucket." % gone)
+    if gone != len(names):
         sys.exit(1)
 
 
