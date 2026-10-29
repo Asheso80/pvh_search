@@ -233,6 +233,37 @@ main{flex:1;padding:10px 12px 40px}
 .lkpick{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:10px}
 .lkopt{padding:10px 4px;border-top:1px solid var(--line);cursor:pointer;min-height:44px;font-size:15px}
 .lkopt.off{opacity:.55;cursor:default}
+/* tasks */
+#tasksbtn{position:relative;display:none}
+body.hastasks .hfield{display:none}
+body.hastasks .hrow{gap:5px}
+.tkact{margin-top:8px}
+.tkmore{display:flex;flex-wrap:wrap;gap:0 20px;margin-top:2px;font-size:13px;font-weight:600}
+.tkmore .link{white-space:nowrap;display:inline-block;padding:12px 0}
+.tkbadge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;
+  border-radius:9px;background:var(--bad);color:#fff;font-size:11px;font-weight:700;
+  line-height:1;display:none;align-items:center;justify-content:center}
+.tkbox{margin:14px 0}
+.tkitem-od{border-color:var(--bad)}
+.tktitle{font-size:16px;font-weight:700;line-height:1.3;word-break:break-word}
+.tkrec{font-size:13px;margin-top:3px}
+.tkmeta{font-size:12px;color:var(--faint);margin:3px 0 7px}
+.tkpill{display:inline-block;font-size:12px;font-weight:700;border-radius:6px;padding:3px 8px;
+  margin:0 6px 5px 0;background:var(--panel2);color:var(--dim)}
+.tkpill.od{background:rgba(255,93,93,.14);color:var(--bad)}
+.tkpill.to{background:rgba(247,190,74,.2);color:var(--warn)}
+.tkpill.hi{background:var(--bad);color:#fff}
+.tkpill.ok{background:rgba(63,203,126,.12);color:var(--ok)}
+.tkdesc{margin-top:6px;font-size:14px;color:var(--dim)}
+.tkpast{margin:2px 0 10px;font-size:13px}
+.tkpast .link{display:inline-block;padding:12px 8px;margin:-12px -8px}
+.tkchips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+.tkonrec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 12px;
+  margin:2px 0 4px;font-size:14px}
+.tkgo{background:var(--accent);border-color:var(--accent);color:#fff}
+.tkbtns{display:flex;gap:10px;margin-top:14px}
+.tkbtns .clbtn{flex:1 1 0}
+.sheet .geolbl{margin-top:14px}
 .ntform{margin-bottom:12px}
 .ntext{display:block;width:100%;min-height:86px;resize:vertical;border:1px solid var(--line);
   border-radius:12px;background:var(--panel);color:var(--text);font:inherit;font-size:16px;
@@ -399,6 +430,7 @@ a.tel{color:var(--accent);text-decoration:none}
     <div class="hrow">
       <button class="navbtn" id="back" onclick="history.back()" style="display:none">&#8592;</button>
       <h1>PVH <span class="hfield">Field </span>Lookup<small id="stamp"></small></h1>
+      <button class="navbtn lbl" id="tasksbtn" title="Tasks" aria-label="Tasks" onclick="go('tasks')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l3 3 5-6"/></svg><span class="nbl">Tasks</span><span class="tkbadge" id="tkbadge"></span></button>
       <button class="navbtn lbl" id="duebtn" title="Due date" aria-label="Due date"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span class="nbl">Due</span></button>
       <button class="navbtn lbl" id="locbtn" title="Location" aria-label="Location"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg><span class="nbl">Locate</span></button>
       <button class="navbtn lbl" id="theme" title="Dark mode" aria-label="Dark mode"><span class="nbi" id="themeicon">&#9789;</span><span class="nbl" id="themelbl">Dark</span></button>
@@ -448,7 +480,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v38 · 2026-10-27";
+var APP_VERSION="v39 · 2026-10-29";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 /* The record counts are on the home screen; the header keeps to one line. */
@@ -783,10 +815,11 @@ var SH=(DB.shared&&DB.shared.url&&DB.shared.key)?DB.shared:null;
 var SC_KEY="pvh_shared_cache", OB_KEY="pvh_outbox", AU_KEY="pvh_auth";
 function jget(k,d){try{var r=localStorage.getItem(k);return r?JSON.parse(r):d;}catch(e){return d;}}
 function jset(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true;}catch(e){return false;}}
-function emptySC(){return {notes:{},checks:{},hist:{},ev:{},queries:{},qhist:{},links:{},lOk:null,nSince:"",cSince:"",qSince:"",lSince:"",at:0};}
+function emptySC(){return {notes:{},checks:{},hist:{},ev:{},queries:{},qhist:{},links:{},lOk:null,tasks:{},people:[],tOk:null,tSince:"",nSince:"",cSince:"",qSince:"",lSince:"",at:0};}
 var SC=jget(SC_KEY,null);
 if(!SC||typeof SC!=="object"||!SC.notes||!SC.checks)SC=emptySC();
 if(!SC.links){SC.links={}; SC.lOk=null; SC.lSince="";}
+if(!SC.tasks){SC.tasks={}; SC.people=[]; SC.tOk=null; SC.tSince="";}
 /* A cache written before the check list existed has only each record's latest
    check. Start its check pull from scratch so the list backfills. */
 if(!SC.hist){SC.hist={}; SC.cSince="";}
@@ -954,6 +987,9 @@ function shFlush(){
       "resolution=merge-duplicates,return=minimal");
     else if(op.type==="unlink")req=shApi("PATCH","/rest/v1/links?id=eq."+encodeURIComponent(op.linkId),
       {active:false},"return=minimal");
+    else if(op.type==="task")req=shApi("POST","/rest/v1/tasks",op.row,"return=minimal");
+    else if(op.type==="tupd")req=shApi("PATCH","/rest/v1/tasks?id=eq."+encodeURIComponent(op.taskId),
+      op.patch,"return=minimal");
     else if(op.type==="edit")req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
       {body:op.body},"return=minimal");
     else if(op.type==="remove")req=shApi("PATCH","/rest/v1/notes?id=eq."+encodeURIComponent(op.noteId),
@@ -1065,8 +1101,36 @@ function pullLinks(){
     SC.lOk=false;
   });
 }
+/* Tasks. Never allowed to fail a sync: until 008_tasks.sql has been run there is
+   no such table, and tOk stays false so the task controls are hidden while
+   everything else carries on. */
+function pullTasks(){
+  return pullPages("tasks","updated_at",SC.tSince||"1970-01-01T00:00:00Z",function(rows){
+    rows.forEach(function(t){
+      var c=SC.tasks[t.id];
+      if(!c||c.updated_at!==t.updated_at)CHG=true;
+      SC.tasks[t.id]=t;
+    });
+  }).then(function(s){
+    if(SC.tOk!==true)CHG=true;
+    SC.tSince=s; SC.tOk=true;
+  },function(e){
+    if(e&&(e.net||e.auth))throw e;
+    if(SC.tOk!==false)CHG=true;
+    SC.tOk=false;
+  });
+}
+/* Everyone who can be given a task. Only the names and ids come down. */
+function pullPeople(){
+  return shApi("POST","/rest/v1/rpc/pvh_people",{}).then(function(r){
+    if(r.status!==200||!Array.isArray(r.json))return;
+    var l=r.json.map(function(p){return {id:p.id,name:p.display_name||""};});
+    if(JSON.stringify(l)!==JSON.stringify(SC.people||[])){SC.people=l; CHG=true;}
+  },function(e){if(e&&(e.net||e.auth))throw e;});
+}
 function typing(){
   var a=document.activeElement, id=a&&a.id;
+  if(document.getElementById("tksheet"))return true;
   if(id==="ntbody"||id==="nteditbody"||id==="shem"||id==="shpw"||id==="lkq")return true;
   if(LK_OPEN)return true;
   if(document.getElementById("nteditbody"))return true;
@@ -1078,7 +1142,7 @@ function shSync(force){
   if(!shOn()||!shSigned()||SYNC.busy)return Promise.resolve();
   if(!force&&Date.now()-SYNC.lastTry<20000)return Promise.resolve();
   SYNC.busy=true; SYNC.lastTry=Date.now(); CHG=false;
-  return shFlush().then(pullNotes).then(pullChecks).then(pullQueries).then(pullEvents).then(pullLinks).then(function(){
+  return shFlush().then(pullNotes).then(pullChecks).then(pullQueries).then(pullEvents).then(pullLinks).then(pullTasks).then(pullPeople).then(function(){
     SYNC.err=""; SC.at=Math.floor(Date.now()/1000); scSave();
   }).catch(function(e){
     if(e&&e.auth)SYNC.err=(AU&&AU.dead)?"Signed out — sign in again to send and receive.":
@@ -1430,6 +1494,366 @@ function lkDo(n){
   obSave(); keepScroll(); if(!unsent)shSync(true);
 }
 
+/* --- tasks. A follow-up on a vehicle or an operator: a title, a due date, a
+   priority and the person it is assigned to. Unlike a note it stays open until
+   someone does it. Same shape as notes and links: read from the copy on the
+   device, every change goes through the outbox, and the database stamps who and
+   when and decides who may do what (supabase/008_tasks.sql). The controls only
+   appear once the tasks table has answered a sync. Due dates are plain
+   calendar days (YYYY-MM-DD), compared as the device's own local day. */
+var TK_SHOW={}, TK_SCOPE="me", TK_DONE=false, TK_PRI="normal", TKREC=null;
+function tkOn(){return shOn()&&shSigned()&&SC.tOk===true;}
+function tkP2(n){return (n<10?"0":"")+n;}
+function tkYmd(d){return d.getFullYear()+"-"+tkP2(d.getMonth()+1)+"-"+tkP2(d.getDate());}
+function tkToday(){return tkYmd(new Date());}
+function tkPlus(n){var d=new Date(); d.setDate(d.getDate()+n); return tkYmd(d);}
+function tkDays(ds){
+  var a=String(ds).split("-"), n=new Date();
+  return Math.round((new Date(+a[0],+a[1]-1,+a[2])-new Date(n.getFullYear(),n.getMonth(),n.getDate()))/864e5);
+}
+function tkNice(ds){
+  var a=String(ds).split("-"), d=new Date(+a[0],+a[1]-1,+a[2]), o={month:"short",day:"numeric"};
+  if(d.getFullYear()!==new Date().getFullYear())o.year="numeric";
+  try{return d.toLocaleDateString("en-CA",o);}catch(e){return String(ds);}
+}
+function tkPerson(id){
+  var l=SC.people||[];
+  for(var i=0;i<l.length;i++)if(l[i].id===id)return l[i].name;
+  return "";
+}
+function tkView(r,pending){
+  var myId=(AU&&AU.uid)||"";
+  return {id:r.id,key:r.rec_key,type:r.rec_type,label:r.rec_label||"",title:r.title,desc:r.description||"",
+    due:r.due_date,pri:r.priority,status:r.status,aid:r.assignee_id,
+    aname:r.assignee_name||tkPerson(r.assignee_id)||"?",cid:r.author_id,cname:r.author_name||"",
+    done:r.done_at?tsParse(r.done_at):0,doneBy:r.done_by||"",outcome:r.outcome||"",
+    cancelled:r.cancelled_at?tsParse(r.cancelled_at):0,cancelledBy:r.cancelled_by||"",
+    upd:tsParse(r.updated_at||r.created_at),pending:!!pending,failed:"",opFailed:"",sending:false,
+    meA:!!myId&&r.assignee_id===myId,meC:!!myId&&r.author_id===myId};
+}
+/* Every task as a list: the server's, with this device's unsent new tasks and
+   unsent changes laid over them so they show the moment they are made. A change
+   the server refused is not shown as if it had happened. */
+function tIndex(){
+  var me=(AU&&AU.name)||"", myId=(AU&&AU.uid)||"", m={};
+  Object.keys(SC.tasks).forEach(function(id){m[id]=tkView(SC.tasks[id],false);});
+  OB.forEach(function(op){
+    if(op.type!=="task"||m[op.row.id])return;
+    var r=op.row, t=tkView({id:r.id,rec_key:r.rec_key,rec_type:r.rec_type,rec_label:r.rec_label,title:r.title,
+      description:r.description,due_date:r.due_date,priority:r.priority,status:"open",assignee_id:r.assignee_id,
+      assignee_name:tkPerson(r.assignee_id),author_id:myId,author_name:me,
+      created_at:new Date(op.at*1000).toISOString()},true);
+    t.failed=op.failed||""; m[r.id]=t;
+  });
+  OB.forEach(function(op){
+    var t=op.type==="tupd"?m[op.taskId]:null; if(!t)return;
+    if(op.failed){t.opFailed=op.failed; return;}
+    var p=op.patch; t.sending=true;
+    if(p.assignee_id){t.aid=p.assignee_id; t.aname=tkPerson(p.assignee_id)||t.aname; t.meA=(t.aid===myId);}
+    if(p.due_date)t.due=p.due_date;
+    if(p.priority)t.pri=p.priority;
+    if(p.status){
+      t.status=p.status;
+      if(p.status==="done"){t.done=op.at; t.doneBy=me; t.outcome=p.outcome||"";}
+      else if(p.status==="open"){t.done=0; t.doneBy=""; t.outcome="";}
+      else if(p.status==="cancelled"){t.cancelled=op.at; t.cancelledBy=me;}
+    }
+  });
+  return Object.keys(m).map(function(id){return m[id];});
+}
+function tkFind(id){
+  var l=tIndex();
+  for(var i=0;i<l.length;i++)if(l[i].id===id)return l[i];
+  return null;
+}
+/* High first, then the nearest due date. */
+function tkCmp(a,b){
+  if((a.pri==="high")!==(b.pri==="high"))return a.pri==="high"?-1:1;
+  if(a.due!==b.due)return a.due<b.due?-1:1;
+  return a.title<b.title?-1:(a.title>b.title?1:0);
+}
+function tkRecFor(key){
+  if(!TKREC){
+    TKREC={};
+    V.forEach(function(v,ix){TKREC[clKeyV(v)]={t:"v",i:ix};});
+    O.forEach(function(o,ix){TKREC[clKey(o)]={t:"o",i:ix};});
+  }
+  return TKREC[key]||null;
+}
+function tkDuePill(t){
+  var d=tkDays(t.due);
+  if(d<0)return '<span class="tkpill od">Overdue · '+esc(tkNice(t.due))+'</span>';
+  if(d===0)return '<span class="tkpill to">Due today</span>';
+  return '<span class="tkpill">Due '+esc(tkNice(t.due))+'</span>';
+}
+function tkCard(t,withRec){
+  var open=t.status==="open", party=(t.meA||t.meC);
+  var h='<div class="ntitem tkitem'+((open&&tkDays(t.due)<0)?' tkitem-od':'')+(t.status==="cancelled"?' ntgone':'')+'">'+
+    '<div class="tktitle">'+esc(t.title)+'</div>';
+  if(withRec){
+    var r=tkRecFor(t.key);
+    h+='<div class="tkrec">'+(r?'<span class="link" onclick="go(\''+r.t+'/'+r.i+'\')">'+esc(t.label||"Record")+' &#8250;</span>'
+      :esc(t.label||"Record")+' <span class="faintx">(not in the current data)</span>')+'</div>';
+  }
+  h+='<div class="tkmeta">Assigned to '+esc(t.meA?"you":t.aname)+' · created by '+esc(t.meC?"you":(t.cname||"?"))+'</div>';
+  var pills="";
+  if(open){
+    pills+=tkDuePill(t);
+    if(t.pri==="high")pills+='<span class="tkpill hi">High</span>';
+  }else if(t.status==="done"){
+    pills+='<span class="tkpill ok">Done · '+esc(ntWhen(t.done))+(t.doneBy?' · '+esc(t.doneBy):'')+'</span>';
+  }else{
+    pills+='<span class="tkpill">Cancelled'+(t.cancelledBy?' by '+esc(t.cancelledBy):'')+'</span>';
+  }
+  if(t.failed)pills+='<span class="badge b-bad">NOT SENT</span>';
+  else if(t.pending||t.sending)pills+='<span class="chip clseen">waiting to send</span>';
+  h+='<div>'+pills+'</div>';
+  if(t.desc)h+='<div class="ntbody tkdesc">'+esc(t.desc)+'</div>';
+  if(t.status==="done"&&t.outcome)h+='<div class="ntbody tkdesc"><b>Outcome:</b> '+esc(t.outcome)+'</div>';
+  if(t.failed)h+='<div class="ntwarn">The server did not accept this task: '+esc(t.failed)+
+    ' <span class="link" onclick="tkDrop(\''+t.id+'\')">Discard</span></div>';
+  if(t.opFailed)h+='<div class="ntwarn">A change to this task was not accepted: '+esc(t.opFailed)+
+    ' <span class="link" onclick="tkDismiss(\''+t.id+'\')">Dismiss</span></div>';
+  if(!t.failed){
+    var bits="", links="";
+    if(open&&party)bits+='<button class="clbtn" onclick="tkDone(\''+t.id+'\')">Mark done</button>';
+    if(t.status==="done"&&party)bits+='<button class="clbtn" onclick="tkReopen(\''+t.id+'\')">Reopen</button>';
+    if(open){
+      if(party){
+        links+='<span class="link" onclick="tkDate(\''+t.id+'\')">Change date</span>'+
+          '<span class="link" onclick="tkPri(\''+t.id+'\')">'+(t.pri==="high"?'Make normal':'Make high')+'</span>';
+      }
+      if(t.meC){
+        links+='<span class="link" onclick="tkWho(\''+t.id+'\')">Reassign</span>'+
+          '<span class="link" onclick="tkCancel(\''+t.id+'\')">Cancel task</span>';
+      }
+    }
+    if(bits)h+='<div class="tkact">'+bits+'</div>';
+    if(links)h+='<div class="tkmore">'+links+'</div>';
+  }
+  return h+'</div>';
+}
+/* The tasks on a vehicle or operator, open ones first, with a way to add one. */
+function tkBlock(t,i,key){
+  if(!tkOn())return "";
+  var all=tIndex().filter(function(x){return x.key===key;});
+  var open=all.filter(function(x){return x.status==="open";}).sort(tkCmp);
+  var past=all.filter(function(x){return x.status!=="open";}).sort(function(a,b){
+    return (b.done||b.cancelled||b.upd)-(a.done||a.cancelled||a.upd);});
+  var h='<div class="tkbox"><div class="lkhead"><span class="seclabel" style="margin:0">Tasks'+
+    (open.length?' ('+open.length+' open)':'')+'</span>'+
+    '<button class="clbtn" onclick="tkNew(\''+t+'\','+i+')">+ Task</button></div>';
+  h+=open.length?open.map(function(x){return tkCard(x,false);}).join(""):
+    '<div class="empty">No open tasks on this record.</div>';
+  if(past.length){
+    var on=!!TK_SHOW[t+"/"+i];
+    h+='<div class="tkpast"><span class="link" onclick="tkToggle(\''+t+'/'+i+'\')">'+(on?'Hide':'Show')+
+      ' finished tasks ('+past.length+')</span></div>'+(on?past.map(function(x){return tkCard(x,false);}).join(""):"");
+  }
+  return h+'</div>';
+}
+function tkToggle(k){TK_SHOW[k]=!TK_SHOW[k]; keepScroll();}
+
+/* --- sheets: the create form and the small prompts, slid over the page. They sit
+   outside the page body, so a sync redrawing the page leaves them alone. */
+function tkSheetClose(){var e=document.getElementById("tksheet"); if(e)e.remove();}
+function tkSheet(html){
+  tkSheetClose();
+  var d=document.createElement("div"); d.id="tksheet"; d.className="sheetbg";
+  d.innerHTML='<div class="sheet" role="dialog" aria-modal="true">'+html+'</div>';
+  d.addEventListener("click",function(ev){if(ev.target===d)tkSheetClose();});
+  document.body.appendChild(d);
+}
+if(!window.__tkKey){
+  window.__tkKey=true;
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")tkSheetClose();});
+}
+function tkVal(id){var e=document.getElementById(id); return e?e.value:"";}
+function tkErr(msg,focusId){
+  var e=document.getElementById("tkErr");
+  if(e){e.textContent=msg; e.style.display="block";}
+  var f=focusId&&document.getElementById(focusId); if(f)f.focus();
+}
+function tkErrHide(){var e=document.getElementById("tkErr"); if(e)e.style.display="none";}
+function tkDateRow(cur){
+  return '<div class="tkchips"><button type="button" class="fchip" onclick="tkPick(1)">Tomorrow</button>'+
+    '<button type="button" class="fchip" onclick="tkPick(7)">1 week</button>'+
+    '<button type="button" class="fchip" onclick="tkPick(14)">2 weeks</button></div>'+
+    '<label class="duelbl" style="margin-bottom:6px"><input type="date" id="tkDue" aria-label="Due date" min="'+
+    tkToday()+'" value="'+esc(cur||"")+'"></label>';
+}
+function tkPick(n){var e=document.getElementById("tkDue"); if(e){e.value=tkPlus(n); tkErrHide();}}
+function tkWhoOptions(sel){
+  var l=(SC.people||[]).slice();
+  if(!l.length&&AU)l=[{id:AU.uid,name:AU.name}];
+  return l.map(function(p){
+    return '<option value="'+esc(p.id)+'"'+(p.id===sel?' selected':'')+'>'+esc(p.name)+
+      ((AU&&p.id===AU.uid)?' (you)':'')+'</option>';}).join("");
+}
+function tkSetPri(p){
+  TK_PRI=p;
+  var n=document.getElementById("tkpN"), h=document.getElementById("tkpH");
+  if(n)n.classList.toggle("on",p==="normal");
+  if(h)h.classList.toggle("on",p==="high");
+}
+function tkNew(t,i){
+  if(!tkOn())return;
+  var r=recInfo(t,i); if(!r)return;
+  TK_PRI="normal";
+  tkSheet('<div class="seclabel" style="margin-top:0">New task</div>'+
+    '<div class="tkonrec"><span class="faintx">On this '+esc(r.type)+'</span><br><b>'+esc(r.label)+'</b></div>'+
+    '<div class="geolbl">Title</div>'+
+    '<input id="tkTitle" class="dsinput" maxlength="120" autocomplete="off" placeholder="What needs doing" oninput="tkErrHide()">'+
+    '<div class="geolbl">Due date</div>'+tkDateRow("")+
+    '<div class="geolbl">Priority</div>'+
+    '<div class="tkchips"><button type="button" class="fchip on" id="tkpN" onclick="tkSetPri(\'normal\')">Normal</button>'+
+    '<button type="button" class="fchip" id="tkpH" onclick="tkSetPri(\'high\')">High</button></div>'+
+    '<div class="geolbl">Assign to</div>'+
+    '<select id="tkWho" class="dsinput">'+tkWhoOptions(AU&&AU.uid)+'</select>'+
+    '<div class="geolbl">Description (optional)</div>'+
+    '<textarea id="tkDesc" class="ntext" rows="3" maxlength="2000" placeholder="Details, what to look for…"></textarea>'+
+    '<div class="ntwarn" id="tkErr" style="display:none;margin:10px 0 0"></div>'+
+    '<div class="tkbtns"><button class="clbtn" onclick="tkSheetClose()">Cancel</button>'+
+    '<button class="clbtn tkgo" onclick="tkCreate(\''+t+'\','+i+')">Create task</button></div>');
+  setTimeout(function(){var e=document.getElementById("tkTitle"); if(e)e.focus();},60);
+}
+function tkCreate(t,i){
+  if(!tkOn())return;
+  var r=recInfo(t,i); if(!r)return;
+  var title=tkVal("tkTitle").trim(), due=tkVal("tkDue"), who=tkVal("tkWho"), desc=tkVal("tkDesc").trim();
+  if(!title){tkErr("Enter a title.","tkTitle"); return;}
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(due)){tkErr("Pick a due date.","tkDue"); return;}
+  if(due<tkToday()){tkErr("The due date can't be in the past.","tkDue"); return;}
+  if(!who){tkErr("Choose who it is for.","tkWho"); return;}
+  OB.push({type:"task",at:Math.floor(Date.now()/1000),row:{id:uid(),rec_key:r.key,rec_type:r.type,
+    rec_label:r.label.slice(0,200),title:title.slice(0,120),description:desc?desc.slice(0,2000):null,
+    due_date:due,priority:TK_PRI,assignee_id:who}});
+  obSave(); tkSheetClose(); keepScroll(); shSync(true);
+}
+function tkOp(id,patch){
+  OB.push({type:"tupd",taskId:id,at:Math.floor(Date.now()/1000),patch:patch});
+  obSave(); keepScroll(); shSync(true);
+}
+function tkDone(id){
+  var t=tkFind(id); if(!t)return;
+  tkSheet('<div class="seclabel" style="margin-top:0">Mark done</div>'+
+    '<div class="tkonrec"><b>'+esc(t.title)+'</b></div>'+
+    '<div class="geolbl">What was the outcome? (optional)</div>'+
+    '<textarea id="tkOut" class="ntext" rows="3" maxlength="500" placeholder="Re-inspected, passed"></textarea>'+
+    '<div class="tkbtns"><button class="clbtn" onclick="tkSheetClose()">Cancel</button>'+
+    '<button class="clbtn tkgo" onclick="tkDoneGo(\''+id+'\')">Mark done</button></div>');
+  setTimeout(function(){var e=document.getElementById("tkOut"); if(e)e.focus();},60);
+}
+function tkDoneGo(id){
+  var out=tkVal("tkOut").trim().slice(0,500);
+  tkSheetClose();
+  tkOp(id,{status:"done",done_at:new Date().toISOString(),outcome:out||null});
+}
+function tkReopen(id){tkOp(id,{status:"open"});}
+function tkPri(id){
+  var t=tkFind(id); if(!t)return;
+  tkOp(id,{priority:t.pri==="high"?"normal":"high"});
+}
+function tkDate(id){
+  var t=tkFind(id); if(!t)return;
+  tkSheet('<div class="seclabel" style="margin-top:0">Change due date</div>'+
+    '<div class="tkonrec"><b>'+esc(t.title)+'</b><br><span class="faintx">Due '+esc(tkNice(t.due))+'</span></div>'+
+    '<div class="geolbl">New due date</div>'+tkDateRow(t.due>=tkToday()?t.due:"")+
+    '<div class="ntwarn" id="tkErr" style="display:none;margin:10px 0 0"></div>'+
+    '<div class="tkbtns"><button class="clbtn" onclick="tkSheetClose()">Cancel</button>'+
+    '<button class="clbtn tkgo" onclick="tkDateGo(\''+id+'\')">Save date</button></div>');
+}
+function tkDateGo(id){
+  var due=tkVal("tkDue"), t=tkFind(id); if(!t)return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(due)){tkErr("Pick a due date.","tkDue"); return;}
+  if(due<tkToday()){tkErr("The due date can't be in the past.","tkDue"); return;}
+  tkSheetClose();
+  if(due!==t.due)tkOp(id,{due_date:due});
+}
+function tkWho(id){
+  var t=tkFind(id); if(!t)return;
+  tkSheet('<div class="seclabel" style="margin-top:0">Reassign</div>'+
+    '<div class="tkonrec"><b>'+esc(t.title)+'</b><br><span class="faintx">Now with '+esc(t.meA?"you":t.aname)+'</span></div>'+
+    '<div class="geolbl">Assign to</div>'+
+    '<select id="tkWho" class="dsinput">'+tkWhoOptions(t.aid)+'</select>'+
+    '<div class="tkbtns"><button class="clbtn" onclick="tkSheetClose()">Cancel</button>'+
+    '<button class="clbtn tkgo" onclick="tkWhoGo(\''+id+'\')">Reassign</button></div>');
+}
+function tkWhoGo(id){
+  var who=tkVal("tkWho"), t=tkFind(id); if(!t)return;
+  tkSheetClose();
+  if(who&&who!==t.aid)tkOp(id,{assignee_id:who});
+}
+function tkCancel(id){
+  askBox("Cancel this task?","It stays on file, marked cancelled, with your name. It can't be reopened.",
+    "Cancel task",function(){tkOp(id,{status:"cancelled"});});
+}
+/* An unsent task the server refused, or a refused change to one. */
+function tkDrop(id){
+  OB=OB.filter(function(o){return !((o.type==="task"&&o.row.id===id)||(o.type==="tupd"&&o.taskId===id));});
+  obSave(); keepScroll();
+}
+function tkDismiss(id){
+  OB=OB.filter(function(o){return !(o.failed&&o.type==="tupd"&&o.taskId===id);});
+  obSave(); keepScroll();
+}
+
+/* --- the Tasks page and the badge on its header button. */
+function tkBadge(){
+  var b=document.getElementById("tasksbtn"), n=document.getElementById("tkbadge"); if(!b||!n)return;
+  var on=tkOn();
+  b.style.display=on?"flex":"none";
+  document.body.classList.toggle("hastasks",on);
+  if(!on)return;
+  var c=tIndex().filter(function(x){return x.status==="open"&&x.meA&&tkDays(x.due)<=0;}).length;
+  n.textContent=c>99?"99+":String(c);
+  n.style.display=c?"flex":"none";
+}
+function tkInScope(x){
+  var s=TK_SCOPE;
+  if(s==="me")return x.meA;
+  if(s==="by")return x.meC;
+  if(s.indexOf("p:")===0)return x.aid===s.slice(2);
+  return true;
+}
+function renderTasks(){
+  var h='<div class="seclabel">Tasks</div>';
+  if(!tkOn()){
+    main.innerHTML=h+'<div class="notes">'+(shSigned()?'Tasks are not available yet on this account.':
+      'Sign in to see tasks. <span class="link" onclick="go(\'shared\')">Sign in…</span>')+'</div>';
+    return;
+  }
+  var opts=[["me","Assigned to me"],["by","Created by me"],["all","Everyone"]];
+  (SC.people||[]).forEach(function(p){if(p.id!==AU.uid)opts.push(["p:"+p.id,"Assigned to "+p.name]);});
+  if(!opts.some(function(o){return o[0]===TK_SCOPE;}))TK_SCOPE="me";
+  h+='<div class="browsebar"><select id="tkScope" aria-label="Show">'+opts.map(function(o){
+    return '<option value="'+esc(o[0])+'"'+(o[0]===TK_SCOPE?' selected':'')+'>'+esc(o[1])+'</option>';}).join("")+
+    '</select></div>';
+  var mine=tIndex().filter(tkInScope);
+  var open=mine.filter(function(x){return x.status==="open";}).sort(tkCmp);
+  var grps=[["Overdue",function(d){return d<0;},"var(--bad)"],["Today",function(d){return d===0;},""],
+    ["This week",function(d){return d>=1&&d<=7;},""],["Later",function(d){return d>7;},""]];
+  grps.forEach(function(g){
+    var l=open.filter(function(x){return g[1](tkDays(x.due));});
+    if(!l.length)return;
+    h+='<div class="seclabel"'+(g[2]?' style="color:'+g[2]+'"':'')+'>'+g[0]+' ('+l.length+')</div>'+
+      l.map(function(x){return tkCard(x,true);}).join("");
+  });
+  if(!open.length)h+='<div class="empty">'+(TK_SCOPE==="me"?
+    'Nothing is assigned to you. Open a vehicle or operator and tap + Task to add one.':'No open tasks here.')+'</div>';
+  var cut=Date.now()/1000-14*86400;
+  var past=mine.filter(function(x){return x.status!=="open"&&(x.done||x.cancelled||x.upd)>=cut;}).sort(function(a,b){
+    return (b.done||b.cancelled||b.upd)-(a.done||a.cancelled||a.upd);});
+  if(past.length){
+    h+='<div class="tkpast"><span class="link" onclick="tkToggleDone()">'+(TK_DONE?'Hide':'Show')+
+      ' finished in the last 14 days ('+past.length+')</span></div>'+
+      (TK_DONE?past.map(function(x){return tkCard(x,true);}).join(""):"");
+  }
+  main.innerHTML=h;
+  document.getElementById("tkScope").addEventListener("change",function(){TK_SCOPE=this.value; renderTasks();});
+}
+function tkToggleDone(){TK_DONE=!TK_DONE; keepScroll();}
+
 /* --- records that still have an action open, for the home screen. */
 function actionRecs(){
   var idx=nIndex(), keys=Object.keys(idx).filter(function(k){
@@ -1482,6 +1906,7 @@ function shLine(){
   return '<div class="hint" style="padding:10px 20px 0">'+t+'</div>';
 }
 function renderShared(){
+  tkBadge();
   var h='<div class="seclabel">Shared notes and checks</div>';
   if(!shOn()){
     main.innerHTML=h+'<div class="notes">This data file has no shared-notes connection, so notes and shared checks are off. '+
@@ -2226,6 +2651,7 @@ function renderVehicle(i){
     '</div></div>';
   h+=clPanel(priorV,"markCheckedV("+i+")");
   h+=ntBar(clKeyV(v));
+  h+=tkBlock("v",i,clKeyV(v));
   h+='<button class="copybtn quiet" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   h+=lkBlock("v",i);
   h+='<div class="grid">'+
@@ -2281,6 +2707,7 @@ function renderOperator(i){
     .filter(Boolean).map(esc).join("<br>");
   h+=clPanel(prior,"markChecked("+i+")");
   h+=ntBar(clKey(o));
+  h+=tkBlock("o",i,clKey(o));
   h+='<button class="copybtn quiet" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
   h+=lkBlock("o",i);
   h+='<div class="grid">'+
@@ -2353,13 +2780,15 @@ function route(){
   FRESH=(h!==ROUTE_LAST); ROUTE_LAST=h;
   if(FRESH){LK_OPEN=""; LK_ASK="";}
   const m=/^(v|o|w)\/(\d+)$/.exec(h);
-  const sp=(h==="shared"||h==="actions");
+  const sp=(h==="shared"||h==="actions"||h==="tasks");
+  tkBadge();
   window.scrollTo(0,0);
   document.getElementById("back").style.display=(m||sp)?"flex":"none";
   document.body.classList.toggle("inrec",!!(m||sp));
   document.body.classList.remove("hmin");
   if(h==="shared"){ renderShared(); }
   else if(h==="actions"){ renderActions(); }
+  else if(h==="tasks"){ renderTasks(); }
   else if(m){ if(m[1]==="v") renderVehicle(+m[2]); else if(m[1]==="o") renderOperator(+m[2]); else renderOwner(+m[2]); }
   else { renderHome(q.value); }
   FRESH=false;
@@ -2694,6 +3123,10 @@ window.pgMore=pgMore;window.jumpTo=jumpTo;window.ntShow=ntShow;window.ntDismiss=
 window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
 window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
 window.lkOpen=lkOpen;window.lkClose=lkClose;window.lkFind=lkFind;window.lkAdd=lkAdd;window.lkRemove=lkRemove;window.lkDo=lkDo;window.lkCancel=lkCancel;
+window.tkNew=tkNew;window.tkCreate=tkCreate;window.tkPick=tkPick;window.tkSetPri=tkSetPri;window.tkErrHide=tkErrHide;
+window.tkSheetClose=tkSheetClose;window.tkDone=tkDone;window.tkDoneGo=tkDoneGo;window.tkReopen=tkReopen;window.tkPri=tkPri;
+window.tkDate=tkDate;window.tkDateGo=tkDateGo;window.tkWho=tkWho;window.tkWhoGo=tkWhoGo;window.tkCancel=tkCancel;
+window.tkDrop=tkDrop;window.tkDismiss=tkDismiss;window.tkToggle=tkToggle;window.tkToggleDone=tkToggleDone;
 window.__route=route;
 window.addEventListener("hashchange",route);
 route();

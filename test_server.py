@@ -190,7 +190,8 @@ def photo_listing(body):
 
 
 # ------------------------------------------------------- pretend shared notes
-DB = {"notes": [], "checks": [], "queries": [], "note_events": [], "links": [], "link_events": []}
+DB = {"notes": [], "checks": [], "queries": [], "note_events": [], "links": [], "link_events": [],
+      "tasks": [], "task_events": []}
 LOCK = threading.Lock()   # the browser sends requests side by side
 
 
@@ -207,6 +208,61 @@ def seed():
                         "op_label": "Casey Testdriver ZZD002", "veh_label": "Deck 901 Ford/Escape TEST-901",
                         "active": True, "created_at": ago(3), "created_by": two[1], "created_name": two[0],
                         "updated_at": ago(3), "updated_by": two[1], "updated_name": two[0]})
+
+
+def seed_tasks():
+    one, two = USERS["officer1@test"], USERS["officer2@test"]
+    today = datetime.date.today()
+
+    def task(rec_key, rec_type, label, title, days, pri, assignee, creator, desc=None):
+        DB["tasks"].append({"id": str(uuid.uuid4()), "rec_key": rec_key, "rec_type": rec_type, "rec_label": label,
+                            "title": title, "description": desc, "due_date": (today + datetime.timedelta(days=days)).isoformat(),
+                            "priority": pri, "status": "open", "assignee_id": assignee[1], "assignee_name": assignee[0],
+                            "created_at": ago(3), "updated_at": ago(3), "author_id": creator[1], "author_name": creator[0],
+                            "done_at": None, "done_by": None, "outcome": None, "cancelled_at": None, "cancelled_by": None})
+    task("v:ZZT902", "vehicle", "Toyota/Sienna TEST-902", "Re-check the roof light", -2, "high", one, two,
+         "Made-up task. Owner says it was fixed Friday.")
+    task("o:ZZTEST000001", "operator", "Casey Testdriver ZZD002", "Confirm licence renewal paperwork", 0, "normal", two, one)
+    task("v:ZZT903", "vehicle", "Honda/Civic TEST-903", "Verify the meter seal after repair", 5, "normal", one, one)
+
+
+def task_change(row, uid, name, patch):
+    """The rules supabase/008_tasks.sql applies to an update, for the test server."""
+    if row["status"] == "cancelled":
+        raise Refused(400, "A cancelled task cannot be changed")
+    party = uid in (row["assignee_id"], row["author_id"])
+    if "assignee_id" in patch and patch["assignee_id"] != row["assignee_id"]:
+        if row["author_id"] != uid:
+            raise Refused(400, "Only the person who created a task can reassign it")
+        who = next((n for n, u in USERS.values() if u == patch["assignee_id"]), None)
+        if who is None:
+            raise Refused(400, "That person cannot be given a task")
+        row.update(assignee_id=patch["assignee_id"], assignee_name=who)
+    if "due_date" in patch and patch["due_date"] != row["due_date"]:
+        if not party or row["status"] != "open":
+            raise Refused(400, "Only the assignee or the creator can change the date")
+        row["due_date"] = patch["due_date"]
+    if "priority" in patch and patch["priority"] != row["priority"]:
+        if not party or row["status"] != "open":
+            raise Refused(400, "Only the assignee or the creator can change the priority")
+        row["priority"] = patch["priority"]
+    new = patch.get("status")
+    if new and new != row["status"]:
+        if row["status"] == "open" and new == "done":
+            if not party:
+                raise Refused(400, "Only the assignee or the creator can finish a task")
+            row.update(status="done", done_at=now(), done_by=name, outcome=(patch.get("outcome") or "").strip() or None)
+        elif row["status"] == "done" and new == "open":
+            if not party:
+                raise Refused(400, "Only the assignee or the creator can reopen a task")
+            row.update(status="open", done_at=None, done_by=None, outcome=None)
+        elif row["status"] == "open" and new == "cancelled":
+            if row["author_id"] != uid:
+                raise Refused(400, "Only the person who created a task can cancel it")
+            row.update(status="cancelled", cancelled_at=now(), cancelled_by=name, done_at=None, done_by=None, outcome=None)
+        else:
+            raise Refused(400, "That change to a task is not allowed")
+    row["updated_at"] = now()
 
 
 class Refused(Exception):
@@ -240,6 +296,16 @@ def write(table, uid, row, query):
         return
     if any(r["id"] == row.get("id") for r in rows):
         raise Refused(409, "duplicate key value violates unique constraint")
+    if table == "tasks":
+        who = next((n for n, u in USERS.values() if u == row.get("assignee_id")), None)
+        if who is None:
+            raise Refused(400, "That person cannot be given a task")
+        if not str(row.get("title") or "").strip() or not row.get("due_date"):
+            raise Refused(400, "new row violates check constraint \"tasks_title_check\"")
+        rows.append(dict(row, id=row.get("id") or str(uuid.uuid4()), status="open", assignee_name=who,
+                         author_id=uid, author_name=name, created_at=now(), updated_at=now(), done_at=None,
+                         done_by=None, outcome=None, cancelled_at=None, cancelled_by=None))
+        return
     new = dict(row, id=row.get("id") or str(uuid.uuid4()), author_id=uid, author_name=name, created_at=now())
     new["written_at"] = min(new.get("written_at") or now(), now())
     if table == "notes":
@@ -260,6 +326,9 @@ def change(table, uid, patch, query):
             row.update(active=bool(patch["active"]), updated_at=now(), updated_by=uid, updated_name=name)
             DB["link_events"].append({"link_id": rid, "kind": "add" if patch["active"] else "remove",
                                       "by_name": name, "created_at": now()})
+        return
+    if table == "tasks":
+        task_change(row, uid, name, patch)
         return
     if table != "notes":
         raise Refused(403, "permission denied")
@@ -394,9 +463,13 @@ class Handler(BaseHTTPRequestHandler):
             if not self.signed_in():
                 return self.send(400, {"statusCode": "400", "error": "Unauthorized", "message": "Invalid JWT"})
             return self.send(200, photo_listing(b))
+        if path == "/rest/v1/rpc/pvh_people":
+            if not self.signed_in():
+                return self.send(401, {"message": "JWT expired"})
+            return self.send(200, [{"id": u, "display_name": n} for n, u in sorted(USERS.values())])
         t = self.table(path)
         uid = self.signed_in()
-        if not t or t in ("profiles", "note_events", "link_events"):
+        if not t or t in ("profiles", "note_events", "link_events", "task_events"):
             return self.send(403, {"message": "permission denied"})
         if not uid:
             return self.send(401, {"message": "JWT expired"})
@@ -426,6 +499,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     seed()
+    seed_tasks()
     make_photos()
     app_html()   # fail now, not in the browser, if the build script has an error
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
