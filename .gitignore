@@ -31,3 +31,6 @@ pvh_local_config.json
 # Last committed build script, written by githooks/post-commit for the
 # unattended 07:30 build (pull_and_build_pvh.py). Not source -- never commit.
 release/
+
+# Private Supabase setup guide (admin steps, officer access, email setup).
+PVH_supabase_setup_private.md
