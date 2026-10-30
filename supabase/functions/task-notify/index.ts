@@ -14,7 +14,7 @@
 //   RESEND_API_KEY   from Resend (Sending access, limited to the domain)
 //   NOTIFY_SECRET    the same value as notify_config 'secret' in the database
 //   APP_URL          optional, the app's address (default below)
-//   FROM_EMAIL       optional, e.g. PVH Tasks <tasks@pvhnotify.fyi>
+//   FROM_EMAIL       the sender, e.g. PVH Tasks <tasks@your-domain>
 // SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are supplied by Supabase itself.
 //
 // An email carries counts, a due date, a priority and a link. Never a plate, a
@@ -24,7 +24,7 @@ const SB = Deno.env.get("SUPABASE_URL");
 const KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 const RESEND = Deno.env.get("RESEND_API_KEY");
 const SECRET = Deno.env.get("NOTIFY_SECRET");
-const FROM = Deno.env.get("FROM_EMAIL") || "PVH Tasks <tasks@pvhnotify.fyi>";
+const FROM = Deno.env.get("FROM_EMAIL");
 const APP = Deno.env.get("APP_URL") || "https://asheso80.github.io/pvh_search/";
 const TZ = "America/Halifax";
 
@@ -124,7 +124,7 @@ async function digest(slot) {
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
   if (!SECRET || req.headers.get("x-notify-secret") !== SECRET) return json({ error: "Unauthorized" }, 401);
-  if (!SB || !KEY || !RESEND) return json({ error: "Function secrets are not set" }, 500);
+  if (!SB || !KEY || !RESEND || !FROM) return json({ error: "Function secrets are not set" }, 500);
   let body;
   try { body = await req.json(); } catch { return json({ error: "Bad JSON" }, 400); }
   try {
