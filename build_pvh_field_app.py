@@ -1215,8 +1215,21 @@ h1{font-size:15px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
 body.inrec .hfield{display:none}
 /* On a long record page, once scrolled, the header shrinks to the back button and
    title so the sticky bar stops taking a sixth of the screen. */
-body.hmin #searchwrap,body.hmin #duebtn,body.hmin #locbtn,body.hmin #theme{display:none}
+body.hmin #locbtn,body.hmin #morebtn{display:none}
 body.hmin header{padding-bottom:10px}
+/* Search belongs to the home page. On a record, Tasks or Shared it only repeats
+   the last query and costs a third of the header; Back returns to the results. */
+body.inrec #searchwrap{display:none}
+body.inrec header{padding-bottom:10px}
+/* Due date and dark mode sit behind one button; Tasks and Locate stay out. */
+#moremenu{position:absolute;right:12px;top:60px;z-index:20;min-width:200px;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 8px 24px rgba(0,0,0,.18);padding:6px}
+.menuitem{display:flex;align-items:center;gap:12px;width:100%;min-height:48px;padding:0 12px;
+  border:0;background:none;color:var(--text);font:inherit;font-size:15px;font-weight:600;
+  border-radius:8px;cursor:pointer;text-align:left}
+.menuitem:active{background:var(--panel2)}
+.menuitem .nbi{display:inline-block;width:20px;text-align:center;font-size:17px;line-height:1}
 h1 small{display:block;font-size:11px;font-weight:400;color:var(--faint);
   letter-spacing:.02em;text-transform:none;overflow:hidden;text-overflow:ellipsis}
 #searchwrap{margin-top:8px;position:relative}
@@ -1592,9 +1605,12 @@ a.tel{color:var(--accent);text-decoration:none}
       <button class="navbtn" id="back" onclick="history.back()" style="display:none">&#8592;</button>
       <h1>PVH <span class="hfield">Field </span>Lookup<small id="stamp"></small></h1>
       <button class="navbtn lbl" id="tasksbtn" title="Tasks" aria-label="Tasks" onclick="go('tasks')"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12l3 3 5-6"/></svg><span class="nbl">Tasks</span><span class="tkbadge" id="tkbadge"></span></button>
-      <button class="navbtn lbl" id="duebtn" title="Due date" aria-label="Due date"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span class="nbl">Due</span></button>
       <button class="navbtn lbl" id="locbtn" title="Location" aria-label="Location"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/></svg><span class="nbl">Locate</span></button>
-      <button class="navbtn lbl" id="theme" title="Dark mode" aria-label="Dark mode"><span class="nbi" id="themeicon">&#9789;</span><span class="nbl" id="themelbl">Dark</span></button>
+      <button class="navbtn lbl" id="morebtn" title="More" aria-label="More" aria-haspopup="true" aria-expanded="false"><span class="nbi">&#8943;</span><span class="nbl">More</span></button>
+    </div>
+    <div id="moremenu" style="display:none">
+      <button class="menuitem" id="duebtn" title="Due date" aria-label="Due date"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span>Due date</span></button>
+      <button class="menuitem" id="theme" title="Dark mode" aria-label="Dark mode"><span class="nbi" id="themeicon">&#9789;</span><span id="themelbl">Dark mode</span></button>
     </div>
     <div id="searchwrap">
       <input id="q" type="search" placeholder="Deck # / plate / name / licence&#8230;"
@@ -3984,7 +4000,7 @@ try{darkMode=localStorage.getItem(THEME_KEY)==="dark";}catch(e){}
 function applyTheme(){
   document.body.classList.toggle("light",!darkMode);
   document.getElementById("themeicon").innerHTML=darkMode?"&#9788;":"&#9789;";
-  document.getElementById("themelbl").textContent=darkMode?"Light":"Dark";
+  document.getElementById("themelbl").textContent=darkMode?"Light mode":"Dark mode";
   const t=darkMode?"Light mode":"Dark mode", b=document.getElementById("theme");
   b.title=t; b.setAttribute("aria-label",t);
 }
@@ -3993,6 +4009,15 @@ document.getElementById("theme").addEventListener("click",()=>{
   darkMode=!darkMode; applyTheme();
   try{localStorage.setItem(THEME_KEY,darkMode?"dark":"light");}catch(e){}
 });
+/* The More menu: opens under its button, closes on any choice, an outside tap or Escape. */
+(function(){
+  var b=document.getElementById("morebtn"), m=document.getElementById("moremenu");
+  function set(on){m.style.display=on?"block":"none"; b.setAttribute("aria-expanded",on?"true":"false");}
+  b.addEventListener("click",function(e){e.stopPropagation(); set(m.style.display==="none");});
+  m.addEventListener("click",function(){set(false);});
+  document.addEventListener("click",function(e){if(!m.contains(e.target))set(false);});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")set(false);});
+})();
 /* ---------- due date ---------- */
 /* Day 30 from the issue date, moved forward to the next Friday the courts are
    open. Only a closure that lands on a Friday can change the result, so the
