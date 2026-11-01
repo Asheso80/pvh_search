@@ -3922,7 +3922,7 @@ function renderOperator(i){
     row("Phone",telLink(o["Phone"]))+
     row("Cell",telLink(o["Cell Phone"]))+
     '</div>'+
-    '<details class="moredet"><summary>More details</summary><div class="grid">'+
+    '<details class="moredet"><summary>Licence details</summary><div class="grid">'+
     row("Master number",dash(o["Master Number"]),1)+
     row("Operator ID",dash(o["ID"]))+
     row("Licence year",dash(o["v Year"]))+
