@@ -1344,6 +1344,8 @@ main{flex:1;padding:10px 12px 40px}
 .chrow b.chstop{color:var(--accent)}
 .clrow{display:block}
 .clq{color:var(--dim);font-size:14px}
+.clact{color:var(--dim);font-size:14px}
+.chlk{padding-left:10px;font-size:12px}
 .chlink{white-space:nowrap;font-weight:600}
 .ntgone{background:var(--panel2);border-style:dashed}
 .ntgone .nthead b{color:var(--dim);font-weight:600}
@@ -1972,12 +1974,24 @@ function clAgo(ts){
   if(d<60)return Math.round(d/7)+" weeks ago";
   return Math.round(d/30)+" months ago";
 }
-/* Both show: a recent query does not replace an older stop. Actual date and
-   time, and who, rather than "1d" -- an officer needs to know whether it was
-   this shift or the one before. */
+/* "today @ 1055Hrs", "yesterday", "3 days ago", then weeks and months. Counted in
+   calendar days, so a stop at 2200 last night is "yesterday", not "today". On a
+   list card this is the whole answer to "has this been stopped lately?"; the
+   record page adds the full date. */
+function clRel(ts){
+  if(!ts)return "";
+  var d=new Date(ts*1000), n=new Date(), p=function(x){return (x<10?"0":"")+x;};
+  var day=Math.round((new Date(n.getFullYear(),n.getMonth(),n.getDate())-new Date(d.getFullYear(),d.getMonth(),d.getDate()))/86400000);
+  if(day<=0)return "today @ "+p(d.getHours())+p(d.getMinutes())+"Hrs";
+  if(day===1)return "yesterday";
+  if(day<7)return day+" days ago";
+  return clAgo(ts);
+}
+/* On a card: the last stop (who and how long ago). A lookup only gets a chip when
+   there is no stop, because a lookup says nothing about whether it was stopped. */
 function clChipsFor(s){
-  return (s.checked?'<span class="chip clchk clwhen">Stopped '+esc(fmtWhen(s.checked))+(s.by?' \u00B7 '+esc(s.by):'')+'</span>':'')+
-    (s.seen?'<span class="chip clseen clwhen">Queried '+esc(fmtWhen(s.seen))+(s.qby?' \u00B7 '+esc(s.qby):'')+'</span>':'');
+  if(s.checked)return '<span class="chip clchk clwhen">Stopped '+esc(clRel(s.checked))+(s.by?' \u00B7 '+esc(s.by):'')+'</span>';
+  return s.seen?'<span class="chip clseen clwhen">Looked up '+esc(clRel(s.seen))+(s.qby?' \u00B7 '+esc(s.qby):'')+'</span>':'';
 }
 function clChips(o){return clChipsFor(clGet(o));}
 function clChipsV(v){return clChipsFor(clGetV(v));}
@@ -3496,28 +3510,65 @@ function chMore(n){
   CH_OPEN[k]=CH_KEEP;
   keepScroll();
 }
+/* History shows the stops. Lookups are behind one line, and the same officer
+   looking a record up several times in a day is one row ("x4"), so a busy record
+   does not bury its stops. */
+var CH_Q={};
+function chLook(n){
+  var k=CH_KEYS[n]; if(k==null)return;
+  CH_Q[k]=!CH_Q[k];
+  keepScroll();
+}
+function chMerge(looks){
+  var out=[], at={};
+  looks.forEach(function(x){
+    var key=(x.by||"?")+"|"+new Date(x.t*1000).toDateString();
+    if(at[key]==null){at[key]=out.length; out.push({by:x.by,t:x.t,n:1,pending:x.pending});}
+    else out[at[key]].n++;
+  });
+  return out;
+}
+function chCounts(l){
+  var stops=l.filter(function(x){return x.stop;}).length;
+  return {stops:stops,looks:l.length-stops};
+}
 function chBlock(s,n,l){
   var lim=CH_OPEN[s.k]; if(!lim)return "";
-  var rows=l.slice(0,lim).map(function(x){
-    return '<div class="chrow"><span><b class="'+(x.stop?'chstop':'')+'">'+(x.stop?'Stopped':'Queried')+'</b> '+esc(x.by||"?")+'</span>'+
+  var stops=l.filter(function(x){return x.stop;}), looks=l.filter(function(x){return !x.stop;});
+  var rows=stops.slice(0,lim).map(function(x){
+    return '<div class="chrow"><span><b class="chstop">Stopped</b> '+esc(x.by||"?")+'</span>'+
       '<span>'+esc(fmtWhen(x.t))+(x.pending?' \u00B7 waiting to send':'')+'</span></div>';}).join("");
-  return '<div class="chlist">'+rows+(l.length>lim?
-    '<div class="chrow"><span class="link" onclick="chMore('+n+')">Show all ('+l.length+')</span></div>':'')+'</div>';
+  if(!stops.length)rows='<div class="chrow"><span>No stops recorded</span></div>';
+  var more=stops.length>lim?'<div class="chrow"><span class="link" onclick="chMore('+n+')">Show all stops ('+stops.length+')</span></div>':'';
+  var lk="";
+  if(looks.length){
+    var open=!!CH_Q[s.k];
+    lk='<div class="chrow"><span class="link" onclick="chLook('+n+')">'+(open?'Hide lookups':'Lookups ('+looks.length+')')+'</span></div>'+
+      (open?chMerge(looks).map(function(x){
+        return '<div class="chrow chlk"><span>'+esc(x.by||"?")+(x.n>1?' \u00D7'+x.n:'')+'</span>'+
+          '<span>'+esc(fmtWhen(x.t))+(x.pending?' \u00B7 waiting to send':'')+'</span></div>';}).join(""):"");
+  }
+  return '<div class="chlist">'+rows+more+lk+'</div>';
 }
 function clPanel(s){
   var local=shOn()?"":" on this device";
-  var line='<span class="clrow">'+(s.checked
-      ?'<b>Stopped '+esc(fmtWhen(s.checked))+(s.by?' \u00B7 '+esc(s.by):'')+'</b>'
-      :'No stop recorded'+local)+'</span>'+
-    '<span class="clrow clq">'+(s.seen
-      ?'Queried '+esc(fmtWhen(s.seen))+(s.qby?' \u00B7 '+esc(s.qby):'')
-      :'Not queried before'+local)+'</span>';
-  /* The list only exists with sharing on, and only earns a link once there is
-     more than the latest stop and query the lines already state. */
   var l=shOn()?chList(s.k):[], n=-1, link="", blk="";
+  /* Stops in the last 30 days: the activity count, shown once there is more than one. */
+  var cut=Date.now()/1000-30*86400, recent=l.filter(function(x){return x.stop&&x.t>=cut;}).length;
+  var line='<span class="clrow">'+(s.checked
+      ?'<b>Stopped '+esc(clRel(s.checked))+'</b>'+(clRel(s.checked).indexOf("today")===0?'':' \u00B7 '+esc(fmtWhen(s.checked)))+(s.by?' \u00B7 '+esc(s.by):'')
+      :'<b>No stop recorded</b>'+local)+'</span>'+
+    (recent>1?'<span class="clrow clact">'+recent+' stops in the last 30 days</span>':'')+
+    '<span class="clrow clq">'+(s.seen
+      ?'Last looked up '+esc(clRel(s.seen))+(s.qby?' \u00B7 '+esc(s.qby):'')
+      :'Not looked up before'+local)+'</span>';
+  /* The list only exists with sharing on, and only earns a link once there is
+     more than the latest stop and lookup the lines already state. */
   if(l.length>(s.checked?1:0)+(s.seen?1:0)){
     n=CH_KEYS.indexOf(s.k); if(n<0){CH_KEYS.push(s.k); n=CH_KEYS.length-1;}
-    link=' <span class="link chlink" onclick="chToggle('+n+')">'+(CH_OPEN[s.k]?'Hide':'History ('+l.length+')')+'</span>';
+    var c=chCounts(l);
+    link=' <span class="link chlink" onclick="chToggle('+n+')">'+(CH_OPEN[s.k]?'Hide history':
+      'History ('+c.stops+(c.stops===1?' stop':' stops')+', '+c.looks+(c.looks===1?' lookup':' lookups')+')')+'</span>';
     blk=chBlock(s,n,l);
   }
   return '<div class="clpanel'+((s.checked&&clDays(s.checked)<14)?' clrecent':'')+(shOn()?' joined':'')+'">'+
@@ -4339,7 +4390,7 @@ window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=se
 window.markChecked=markChecked;window.markCheckedV=markCheckedV;
 window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
 window.pgMore=pgMore;window.jumpTo=jumpTo;window.ntShow=ntShow;window.ntDismiss=ntDismiss;window.ntHist=ntHist;window.ntEdit=ntEdit;window.ntEditCancel=ntEditCancel;
-window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;window.ntCompose=ntCompose;window.ntComposeCancel=ntComposeCancel;
+window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chLook=chLook;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;window.ntCompose=ntCompose;window.ntComposeCancel=ntComposeCancel;
 window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
 window.lkOpen=lkOpen;window.lkClose=lkClose;window.lkFind=lkFind;window.lkAdd=lkAdd;window.lkRemove=lkRemove;window.lkDo=lkDo;window.lkCancel=lkCancel;
 window.tkNew=tkNew;window.tkCreate=tkCreate;window.tkPick=tkPick;window.tkSetPri=tkSetPri;window.tkErrHide=tkErrHide;
