@@ -1415,6 +1415,16 @@ body.hastasks .hrow{gap:5px}
   line-height:1;display:none;align-items:center;justify-content:center}
 .tkbox{margin:0}
 .tkitem-od{border-color:var(--bad)}
+/* Tasks and notes share a list: a task has a blue stripe and a TASK tag, a note
+   a grey stripe (red when it needs action) and a NOTE tag. */
+.ntitem.tkitem{border-left:4px solid var(--accent)}
+.ntitem:not(.tkitem):not(.ntgone){border-left:4px solid var(--faint)}
+.ntitem-act:not(.tkitem){border-left-color:var(--bad)}
+.kind{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;
+  padding:2px 7px;border-radius:5px;margin-right:6px;vertical-align:middle;line-height:1.4}
+.kind-task{background:var(--accent);color:var(--onaccent)}
+.kind-note{background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+.tkkind{margin-bottom:5px}
 .tktitle{font-size:16px;font-weight:700;line-height:1.3;word-break:break-word}
 .tkrec{font-size:13px;margin-top:3px}
 .tkmeta{font-size:12px;color:var(--faint);margin:3px 0 7px}
@@ -2508,7 +2518,7 @@ function ntItem(n){
   var mine=(n.mine&&NT_EDIT!==n.id)?'<div class="ntmine"><span class="link" onclick="ntEdit(\''+n.id+'\')">Edit</span>'+
     '<span class="link danger" onclick="ntRemove(\''+n.id+'\')">Remove</span></div>':'';
   return '<div class="ntitem'+((n.action&&!n.done)?' ntitem-act':'')+'">'+
-    '<div class="nthead"><b>'+esc(n.by||"")+'</b><span>'+esc(ntWhen(n.t))+'</span></div>'+
+    '<div class="nthead"><span><span class="kind kind-note">Note</span><b>'+esc(n.by||"")+'</b></span><span>'+esc(ntWhen(n.t))+'</span></div>'+
     body+ntEditedLine(n)+
     (n.opFailed?'<div class="ntwarn">A change to this note was not accepted: '+esc(n.opFailed)+
       ' <span class="link" onclick="ntDismiss(\''+n.id+'\')">Dismiss</span></div>':'')+
@@ -2790,6 +2800,7 @@ function tkDuePill(t){
 function tkCard(t,withRec){
   var open=t.status==="open", party=(t.meA||t.meC);
   var h='<div class="ntitem tkitem'+((open&&tkDays(t.due)<0)?' tkitem-od':'')+(t.status==="cancelled"?' ntgone':'')+'">'+
+    (withRec?'':'<div class="tkkind"><span class="kind kind-task">Task</span></div>')+
     '<div class="tktitle">'+esc(t.title)+'</div>';
   if(withRec){
     var r=tkRecFor(t.key);
@@ -3849,26 +3860,27 @@ function renderVehicle(i){
   h+=clPanel(priorV);
   h+=ntBar(clKeyV(v));
   h+=actRow("v",i,"markCheckedV("+i+")");
+  /* The vehicle's own details sit under the buttons; the owner's are one tap
+     away. (The MVI due date is already a badge in the header.) */
   h+='<div class="grid">'+
+    row("Company name",dash(v["Business Name"]))+
+    row("VIN",v["VIN"]?tapField(v["VIN"]):"\u2014",1)+
+    row("Vehicle licence no",v["Licence No"]?tapField(v["Licence No"]):"\u2014",1)+
+    row("Last inspection",dash(v["Inspection Date"]))+
+    row("First MVI",dash(v["First MVIDate"]))+
+    row("Vehicle ID",dash(v["Vehicle ID"]))+
+    row("District",dash(v["District"]))+
+    '</div>'+
+    '<details class="moredet"><summary>Owner details</summary><div class="grid">'+
     row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
     (owner&&owner._op!=null?row("Owner-Operator",opLink(owner._op)):"")+
     ((owner?owner._op==null&&(owner._opc||[]).length:(v._opc||[]).length)?row("Owner-Operator",opcNote(owner?owner._opc:v._opc)):"")+
     (op&&(op["Cell Phone"]||op["Phone"])?row("Owner phone (op. record)",telLink(op["Cell Phone"]||op["Phone"])):"")+
-    row("Business",dash(v["Business Name"]))+
     (v["Owner Address"]?row("Owner address",esc(v["Owner Address"])):"")+
-    row("VIN",v["VIN"]?tapField(v["VIN"]):"\u2014",1)+
-    row("Vehicle licence no",v["Licence No"]?tapField(v["Licence No"]):"\u2014",1)+
-    row("Last inspection",dash(v["Inspection Date"]))+
-    '</div>'+
-    '<details class="moredet"><summary>More details</summary><div class="grid">'+
-    row("District",dash(v["District"]))+
     row("Owner ID",dash(v["Owner ID"]))+
-    row("First MVI",dash(v["First MVIDate"]))+
-    row("MVI due (MVI + 1 yr)",dash(addYear(v["First MVIDate"])))+
-    row("Vehicle ID",dash(v["Vehicle ID"]))+
     '</div></details>';
   h+='<button class="copybtn quiet" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
-  if(v["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(v["Notes"])+'</div>';
+  if(v["Notes"]) h+='<div class="seclabel">Taxi Database notes</div><div class="notes">'+esc(v["Notes"])+'</div>';
   h+=actBlock("v",i,clKeyV(v));
   h+=lkBlock("v",i);
   if(others.length){
@@ -3918,7 +3930,7 @@ function renderOperator(i){
     row("District",dash(o["District"]))+
     '</div></details>';
   h+='<button class="copybtn quiet" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
-  if(o["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(o["Notes"])+'</div>';
+  if(o["Notes"]) h+='<div class="seclabel">Taxi Database notes</div><div class="notes">'+esc(o["Notes"])+'</div>';
   h+=actBlock("o",i,clKey(o));
   h+=lkBlock("o",i);
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
