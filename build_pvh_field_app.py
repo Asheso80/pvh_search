@@ -1400,7 +1400,7 @@ body.hastasks .hrow{gap:5px}
 .tkbadge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;
   border-radius:9px;background:var(--bad);color:#fff;font-size:11px;font-weight:700;
   line-height:1;display:none;align-items:center;justify-content:center}
-.tkbox{margin:14px 0}
+.tkbox{margin:0}
 .tkitem-od{border-color:var(--bad)}
 .tktitle{font-size:16px;font-weight:700;line-height:1.3;word-break:break-word}
 .tkrec{font-size:13px;margin-top:3px}
@@ -1417,7 +1417,7 @@ body.hastasks .hrow{gap:5px}
 .tkchips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
 .tkonrec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 12px;
   margin:2px 0 4px;font-size:14px}
-.tkgo{background:var(--accent);border-color:var(--accent);color:#fff}
+.clbtn.tkgo{background:var(--accent);border-color:var(--accent);color:#fff}
 .tkbtns{display:flex;gap:10px;margin-top:14px}
 .tkbtns .clbtn{flex:1 1 0}
 .sheet .geolbl{margin-top:14px}
@@ -1444,6 +1444,10 @@ body.hastasks .hrow{gap:5px}
   color:var(--text);border-radius:10px;padding:0 14px;min-height:44px;font-size:14px;
   font-weight:600;cursor:pointer}
 .clbtn:active{background:var(--line)}
+/* one row of adds under a record's header: stop, note, task */
+.actrow{display:flex;gap:8px;margin:0 0 14px}
+.actrow .clbtn{flex:1 1 0;padding:0 6px}
+.ntbar[onclick]{cursor:pointer}
 .t-Shuttle{background:rgba(63,203,126,.14);color:var(--shuttle)}
 .chev{color:var(--faint);font-size:18px}
 
@@ -2381,7 +2385,7 @@ function ntAdd(t,i){
   OB.push({type:"note",row:{id:uid(),rec_key:r.key,rec_type:r.type,rec_label:r.label.slice(0,200),
     body:body.slice(0,2000),action_needed:!!document.getElementById("ntact").checked,
     written_at:new Date().toISOString()}});
-  obSave(); ta.value="";
+  obSave(); ta.value=""; NT_NEW=false;
   keepScroll(); shSync(true);
 }
 function ntDone(id,flag){
@@ -2389,13 +2393,31 @@ function ntDone(id,flag){
   OB.push({type:"done",noteId:id,done:!!flag,at:Math.floor(Date.now()/1000)});
   obSave(); keepScroll(); shSync(true);
 }
-/* "Read" lands on the section; "Add note" also puts the cursor in the box, so
-   adding one is a single tap whether or not the record already has notes. */
-function ntJump(write){
-  var e=document.getElementById("ntsec"); if(!e)return;
-  e.scrollIntoView({behavior:"smooth",block:"start"});
-  var ta=document.getElementById("ntbody");
-  if(ta&&write)setTimeout(function(){ta.focus();},350);
+/* Tapping the notes strip lands on the notes. "Add note" opens the form in
+   place (it is closed until asked for) and puts the cursor in it; signed out,
+   it goes to the sign-in page instead. */
+var NT_NEW=false;
+function ntJump(){
+  var e=document.getElementById("ntsec"); if(e)e.scrollIntoView({behavior:"smooth",block:"start"});
+}
+function ntCompose(){
+  if(!shSigned()){go("shared"); return;}
+  NT_NEW=true; keepScroll();
+  setTimeout(function(){var t=document.getElementById("ntbody");
+    if(t){t.focus(); t.scrollIntoView({behavior:"smooth",block:"center"});}},60);
+}
+function ntComposeCancel(){NT_NEW=false; keepScroll();}
+/* The three adds for a record, in one row under the header. */
+function actRow(t,i,stopFn){
+  return '<div class="actrow"><button class="clbtn" onclick="'+stopFn+'">Record stop</button>'+
+    (shOn()?'<button class="clbtn" onclick="ntCompose()">Add note</button>':'')+
+    ((t!=="w"&&tkOn())?'<button class="clbtn" onclick="tkNew(\''+t+'\','+i+')">Add task</button>':'')+'</div>';
+}
+/* Tasks and notes on a record read as one stream under one heading. */
+function actBlock(t,i,key){
+  var tk=(t==="w")?"":tkBlock(t,i,key), nt=ntSection(t,i,key);
+  if(!tk&&!nt)return "";
+  return '<div class="seclabel" id="ntsec">Tasks &amp; notes</div>'+tk+nt;
 }
 function ntWhen(t){
   var d=new Date(t*1000), o={month:"short",day:"numeric",hour:"numeric",minute:"2-digit"};
@@ -2412,12 +2434,11 @@ function ntBar(key){
   var line=s.n?('<b>'+s.n+' note'+(s.n===1?'':'s')+'</b>'+
       (s.open?' · <b class="ntopen">'+s.open+' need'+(s.open===1?'s':'')+' action</b>':'')):'No notes yet';
   var openN=(nIndex()[key]||[]).filter(function(n){return n.action&&!n.done&&!n.removed;});
-  var prev=openN.length?'<div class="ntprevs" onclick="ntJump(0)">'+openN.slice(0,2).map(function(n){
+  var prev=openN.length?'<div class="ntprevs">'+openN.slice(0,2).map(function(n){
       return '<div class="ntprev"><b>'+esc(n.by||"")+':</b> '+esc(n.body)+'</div>';}).join("")+
     (openN.length>2?'<div class="faintx">+'+(openN.length-2)+' more needing action</div>':'')+'</div>':'';
-  return '<div class="'+cls+' joined"><span class="cllabel">Notes</span><span class="clline">'+line+'</span>'+
-    (s.n?'<button class="clbtn" onclick="ntJump(0)">Read</button>':'')+
-    '<button class="clbtn" onclick="ntJump(1)">Add note</button>'+prev+'</div>';
+  return '<div class="'+cls+' joined"'+(s.n?' onclick="ntJump()"':'')+'><span class="cllabel">Notes</span><span class="clline">'+
+    line+(s.n?' &#8250;':'')+'</span>'+prev+'</div>';
 }
 var NT_EDIT="", NT_SHOW={}, NT_HIST={};
 function ntFind(id){
@@ -2510,20 +2531,20 @@ function ntRemove(id){
 }
 function ntSection(t,i,key){
   if(!shOn())return "";
-  var l=nIndex()[key]||[];
-  var h='<div class="seclabel" id="ntsec">Notes · shared with other officers ('+ntStat(key).n+')</div>';
+  var l=nIndex()[key]||[], h="";
   if(shSigned()){
     h+=(AU.dead?'<div class="ntwarn">Signed out — what you write is kept and will send once you '+
-        '<span class="link" onclick="go(\'shared\')">sign in again</span>.</div>':'')+
-      '<div class="ntform"><textarea id="ntbody" class="ntext" rows="3" maxlength="2000" '+
-        'placeholder="Add a note to this record… what happened, what needs doing"></textarea>'+
+        '<span class="link" onclick="go(\'shared\')">sign in again</span>.</div>':'');
+    if(NT_NEW)h+='<div class="ntform"><textarea id="ntbody" class="ntext" rows="3" maxlength="2000" '+
+        'placeholder="What happened, what needs doing. Shared with other officers."></textarea>'+
       '<label class="ntchk"><input type="checkbox" id="ntact"> Action needed</label>'+
-      '<button class="copybtn" onclick="ntAdd(\''+t+'\','+i+')">Save note</button></div>';
+      '<div class="tkbtns" style="margin-top:0"><button class="clbtn" onclick="ntComposeCancel()">Cancel</button>'+
+      '<button class="clbtn tkgo" onclick="ntAdd(\''+t+'\','+i+')">Save note</button></div></div>';
   }else{
     h+='<div class="notes">Sign in to read and add shared notes. '+
       '<span class="link" onclick="go(\'shared\')">Sign in…</span></div>';
   }
-  return h+(l.length?l.map(ntItem).join(""):'<div class="empty">No notes on this record yet.</div>');
+  return h+l.map(ntItem).join("");
 }
 
 /* --- operator-vehicle links. "This operator drives this vehicle", one shared row
@@ -2797,11 +2818,8 @@ function tkBlock(t,i,key){
   var open=all.filter(function(x){return x.status==="open";}).sort(tkCmp);
   var past=all.filter(function(x){return x.status!=="open";}).sort(function(a,b){
     return (b.done||b.cancelled||b.upd)-(a.done||a.cancelled||a.upd);});
-  var h='<div class="tkbox"><div class="lkhead"><span class="seclabel" style="margin:0">Tasks'+
-    (open.length?' ('+open.length+' open)':'')+'</span>'+
-    '<button class="clbtn" onclick="tkNew(\''+t+'\','+i+')">+ Task</button></div>';
-  h+=open.length?open.map(function(x){return tkCard(x,false);}).join(""):
-    '<div class="empty">No open tasks on this record.</div>';
+  if(!all.length)return "";
+  var h='<div class="tkbox">'+open.map(function(x){return tkCard(x,false);}).join("");
   if(past.length){
     var on=!!TK_SHOW[t+"/"+i];
     h+='<div class="tkpast"><span class="link" onclick="tkToggle(\''+t+'/'+i+'\')">'+(on?'Hide':'Show')+
@@ -3452,7 +3470,7 @@ function chBlock(s,n,l){
   return '<div class="chlist">'+rows+(l.length>lim?
     '<div class="chrow"><span class="link" onclick="chMore('+n+')">Show all ('+l.length+')</span></div>':'')+'</div>';
 }
-function clPanel(s,handler){
+function clPanel(s){
   var local=shOn()?"":" on this device";
   var line='<span class="clrow">'+(s.checked
       ?'<b>Stopped '+esc(fmtWhen(s.checked))+(s.by?' \u00B7 '+esc(s.by):'')+'</b>'
@@ -3471,7 +3489,6 @@ function clPanel(s,handler){
   return '<div class="clpanel'+((s.checked&&clDays(s.checked)<14)?' clrecent':'')+(shOn()?' joined':'')+'">'+
     '<span class="cllabel">Stops &amp; queries</span>'+
     '<span class="clline">'+line+link+'</span>'+
-    '<button class="clbtn" onclick="'+handler+'">'+(s.checked?'Record another stop':'Record a stop')+'</button>'+
     blk+
     '</div>';
 }
@@ -3806,11 +3823,9 @@ function renderVehicle(i){
     status("NS Permit",v["NSVehicle Permit Expiry"])+
     status("MVI due",addYear(v["First MVIDate"]))+
     '</div></div>';
-  h+=clPanel(priorV,"markCheckedV("+i+")");
+  h+=clPanel(priorV);
   h+=ntBar(clKeyV(v));
-  h+=tkBlock("v",i,clKeyV(v));
-  h+='<button class="copybtn quiet" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
-  h+=lkBlock("v",i);
+  h+=actRow("v",i,"markCheckedV("+i+")");
   h+='<div class="grid">'+
     row("Owner",owner?('<span class="link" onclick="go(\'w/'+owner._i+'\')">'+esc(ownerName(v))+' &#8250;</span>'):dash(ownerName(v)))+
     (owner&&owner._op!=null?row("Owner-Operator",opLink(owner._op)):"")+
@@ -3829,8 +3844,10 @@ function renderVehicle(i){
     row("MVI due (MVI + 1 yr)",dash(addYear(v["First MVIDate"])))+
     row("Vehicle ID",dash(v["Vehicle ID"]))+
     '</div></details>';
-  h+=ntSection("v",i,clKeyV(v));
+  h+='<button class="copybtn quiet" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   if(v["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(v["Notes"])+'</div>';
+  h+=actBlock("v",i,clKeyV(v));
+  h+=lkBlock("v",i);
   if(others.length){
     h+='<div class="seclabel">Other vehicles, same owner ('+others.length+')</div>'+others.map(x=>vehCard(x)).join("");
   }
@@ -3862,11 +3879,9 @@ function renderOperator(i){
     '</div></div>';
   const addr=[o["Address1"],o["Address2"],[o["City"],o["Province"],o["Postal Code"]].filter(Boolean).join(", ")]
     .filter(Boolean).map(esc).join("<br>");
-  h+=clPanel(prior,"markChecked("+i+")");
+  h+=clPanel(prior);
   h+=ntBar(clKey(o));
-  h+=tkBlock("o",i,clKey(o));
-  h+='<button class="copybtn quiet" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
-  h+=lkBlock("o",i);
+  h+=actRow("o",i,"markChecked("+i+")");
   h+='<div class="grid">'+
     row("Address",addr||"\u2014")+
     row("Phone",telLink(o["Phone"]))+
@@ -3879,8 +3894,10 @@ function renderOperator(i){
     row("Approved",dash(o["Approval Date"]))+
     row("District",dash(o["District"]))+
     '</div></details>';
-  h+=ntSection("o",i,clKey(o));
+  h+='<button class="copybtn quiet" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
   if(o["Notes"]) h+='<div class="seclabel">Notes from the system record</div><div class="notes">'+esc(o["Notes"])+'</div>';
+  h+=actBlock("o",i,clKey(o));
+  h+=lkBlock("o",i);
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Vehicles in this name ('+veh.length+')</div>';
   const sn=(o._vsn||[]).map(ix=>V[ix]).filter(Boolean);
@@ -3909,9 +3926,9 @@ function renderOwner(i){
     '<div class="dsub">'+dash(w["Business Name"])+' &middot; <span class="chip" style="background:var(--panel2);color:var(--dim)">OWNER</span>'+
     (op?' <span class="chip" style="background:rgba(95,174,255,.16);color:var(--accent)">OWNER-OPERATOR</span>':'')+
     '</div></div></div></div>';
-  h+=clPanel(priorW,"markCheckedW("+i+")");
+  h+=clPanel(priorW);
   h+=ntBar(nkW(w));
-  h+='<button class="copybtn quiet" onclick="copyRec(\'w\','+i+',this)">Copy record summary</button>';
+  h+=actRow("w",i,"markCheckedW("+i+")");
   h+='<div class="grid">'+
     row("Owner ID",dash(w["Owner ID"]))+
     row("Address",dash(w["Owner Address"]))+
@@ -3919,7 +3936,8 @@ function renderOwner(i){
        (w._opc||[]).length?row("Operator link",opcNote(w._opc)):
        row("Operator link",'<span class="empty">Not separately licensed as an operator</span>'))+
     '</div>';
-  h+=ntSection("w",i,nkW(w));
+  h+='<button class="copybtn quiet" onclick="copyRec(\'w\','+i+',this)">Copy record summary</button>';
+  h+=actBlock("w",i,nkW(w));
   const veh=(w._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Vehicles ('+veh.length+')</div>';
   h+=veh.length?veh.map(v=>vehCard(v)).join(""):'<div class="empty">No active vehicles on file for this owner.</div>';
@@ -3935,7 +3953,7 @@ function route(){
   /* A new page is a visit (and logs a query); the same page drawn again by a
      sync or keepScroll is not. */
   FRESH=(h!==ROUTE_LAST); ROUTE_LAST=h;
-  if(FRESH){LK_OPEN=""; LK_ASK="";}
+  if(FRESH){LK_OPEN=""; LK_ASK=""; NT_NEW=false;}
   const m=/^(v|o|w)\/(\d+)$/.exec(h);
   const sp=(h==="shared"||h==="actions"||h==="tasks");
   tkBadge();
@@ -4277,7 +4295,7 @@ window.go=go;window.copyRec=copyRec;window.copyField=copyField;window.setSort=se
 window.markChecked=markChecked;window.markCheckedV=markCheckedV;
 window.markCheckedW=markCheckedW;window.clearCheckLog=clearCheckLog;
 window.pgMore=pgMore;window.jumpTo=jumpTo;window.ntShow=ntShow;window.ntDismiss=ntDismiss;window.ntHist=ntHist;window.ntEdit=ntEdit;window.ntEditCancel=ntEditCancel;
-window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;
+window.ntEditSave=ntEditSave;window.ntRemove=ntRemove;window.chToggle=chToggle;window.chMore=chMore;window.ntAdd=ntAdd;window.ntDone=ntDone;window.ntJump=ntJump;window.ntCompose=ntCompose;window.ntComposeCancel=ntComposeCancel;
 window.shNow=shNow;window.shOut=shOut;window.shDiscard=shDiscard;
 window.lkOpen=lkOpen;window.lkClose=lkClose;window.lkFind=lkFind;window.lkAdd=lkAdd;window.lkRemove=lkRemove;window.lkDo=lkDo;window.lkCancel=lkCancel;
 window.tkNew=tkNew;window.tkCreate=tkCreate;window.tkPick=tkPick;window.tkSetPri=tkSetPri;window.tkErrHide=tkErrHide;
