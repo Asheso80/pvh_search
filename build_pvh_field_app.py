@@ -919,7 +919,7 @@ window.__datasrc=function(replace){
         'which quietly stops every device that was set up with the old one.</div>'+
         '<input id="dsurl" class="dsinput" type="url" inputmode="url" autocomplete="off" spellcheck="false" '+
           'placeholder="https://… link to PVH_data.json" value="">'+
-        '<button class="copybtn" id="dssave">Save and check now</button>'
+        '<button class="copybtn primary" id="dssave">Save and check now</button>'
       : '<div class="notes">This device already has a data source. The link is not shown here — '+
         'if it needs to change, paste a fresh one and it replaces the old.</div>'+
         '<div class="srccard">Source · '+eh(srcHost(cur))+'<br>Link code <span class="code">'+eh(srcCode(cur))+'</span></div>'+
@@ -1170,7 +1170,7 @@ __HEAD_EXTRA__
 :root{
   --bg:#12161B; --panel:#1C232C; --panel2:#242E39; --line:#37434F;
   --text:#F2F6FA; --dim:#A9B7C6; --faint:#8B98A6;
-  --accent:#5FAEFF; --ok:#43D384; --warn:#F7BE4A; --bad:#FF6363;
+  --accent:#5FAEFF; --onaccent:#06223F; --ok:#43D384; --warn:#F7BE4A; --bad:#FF6363;
   --taxi:#F7BE4A; --limo:#B99BFF; --tour:#5FAEFF; --shuttle:#43D384;
   --platebg:#0D1115; --plateline:#3A4653;
   --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
@@ -1178,7 +1178,7 @@ __HEAD_EXTRA__
 body.light{
   --bg:#EFF2F6; --panel:#FFFFFF; --panel2:#E7EBF0; --line:#CFD7DF;
   --text:#131C26; --dim:#465666; --faint:#5B6774;
-  --accent:#0A62C6; --ok:#0C8747; --warn:#9A6A08; --bad:#C42B2B;
+  --accent:#0A62C6; --onaccent:#FFFFFF; --ok:#0C8747; --warn:#9A6A08; --bad:#C42B2B;
   --taxi:#8F6404; --limo:#6236C9; --tour:#0A62C6; --shuttle:#0C8747;
   --platebg:#FFFFFF; --plateline:#8E9CAA;
 }
@@ -1430,7 +1430,14 @@ body.hastasks .hrow{gap:5px}
 .tkchips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
 .tkonrec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 12px;
   margin:2px 0 4px;font-size:14px}
-.clbtn.tkgo{background:var(--accent);border-color:var(--accent);color:#fff}
+/* Buttons: one filled "primary" per page for the main action, grey for the rest,
+   red text for anything that removes or signs out. */
+.clbtn.tkgo,.clbtn.primary,.copybtn.primary{background:var(--accent);border-color:var(--accent);color:var(--onaccent)}
+.clbtn.tkgo:active,.clbtn.primary:active,.copybtn.primary:active{filter:brightness(.9);background:var(--accent)}
+.clbtn.danger,.link.danger{color:var(--bad)}
+/* the home-page "open actions" card: a count, not an initials tile */
+.actbadge{flex:0 0 44px;width:44px;height:44px;border-radius:50%;background:var(--bad);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;margin-right:12px}
 .tkbtns{display:flex;gap:10px;margin-top:14px}
 .tkbtns .clbtn{flex:1 1 0}
 .sheet .geolbl{margin-top:14px}
@@ -2425,7 +2432,7 @@ function ntCompose(){
 function ntComposeCancel(){NT_NEW=false; keepScroll();}
 /* The three adds for a record, in one row under the header. */
 function actRow(t,i,stopFn){
-  return '<div class="actrow"><button class="clbtn" onclick="'+stopFn+'">Record stop</button>'+
+  return '<div class="actrow"><button class="clbtn primary" onclick="'+stopFn+'">Record stop</button>'+
     (shOn()?'<button class="clbtn" onclick="ntCompose()">Add note</button>':'')+
     ((t!=="w"&&tkOn())?'<button class="clbtn" onclick="tkNew(\''+t+'\','+i+')">Add task</button>':'')+'</div>';
 }
@@ -2499,7 +2506,7 @@ function ntItem(n){
       '<button class="clbtn" onclick="ntEditCancel()">Cancel</button></div>'
     :'<div class="ntbody">'+esc(n.body)+'</div>';
   var mine=(n.mine&&NT_EDIT!==n.id)?'<div class="ntmine"><span class="link" onclick="ntEdit(\''+n.id+'\')">Edit</span>'+
-    '<span class="link" onclick="ntRemove(\''+n.id+'\')">Remove</span></div>':'';
+    '<span class="link danger" onclick="ntRemove(\''+n.id+'\')">Remove</span></div>':'';
   return '<div class="ntitem'+((n.action&&!n.done)?' ntitem-act':'')+'">'+
     '<div class="nthead"><b>'+esc(n.by||"")+'</b><span>'+esc(ntWhen(n.t))+'</span></div>'+
     body+ntEditedLine(n)+
@@ -2612,7 +2619,7 @@ function lkBlock(side,i){
   var key=lkKey(side,i); if(!key)return "";
   var ls=lkFor(side,key), open=(LK_OPEN===side+"/"+i);
   var h='<div class="lkbox"><div class="lkhead"><span class="seclabel" style="margin:0">'+
-    (side==="o"?"Drives":"Seen driven by")+(ls.length?' ('+ls.length+')':'')+'</span>'+
+    (side==="o"?"Drives · linked by officers":"Seen driven by · linked by officers")+(ls.length?' ('+ls.length+')':'')+'</span>'+
     (open?'':'<button class="clbtn" onclick="lkOpen(\''+side+'\','+i+')">+ '+
       (side==="o"?"Link vehicle":"Link operator")+'</button>')+'</div>';
   if(open)h+=lkPicker(side,i);
@@ -2624,11 +2631,11 @@ function lkBlock(side,i){
       '</div><div class="csub">Not in the current data</div></div></div>';
     h+=(LK_ASK===l.id)
       ?'<div class="lkask"><span>Unlink these two? Anyone can link them again. It is kept on file with your name.</span>'+
-        '<span class="lkask-btns"><button class="clbtn" onclick="lkDo('+n+')">Unlink</button>'+
+        '<span class="lkask-btns"><button class="clbtn danger" onclick="lkDo('+n+')">Unlink</button>'+
         '<button class="clbtn" onclick="lkCancel()">Keep</button></span></div>'
       :'<div class="lkfoot"><span>Linked by '+esc(l.by||"?")+' · '+esc(ntWhen(l.t))+
         (l.pending?' · waiting to send':'')+(l.failed?' · not sent: '+esc(l.failed):'')+'</span>'+
-        '<span class="link" onclick="lkRemove('+n+')">Unlink</span></div>';
+        '<span class="link danger" onclick="lkRemove('+n+')">Unlink</span></div>';
   });
   return h+'</div>';
 }
@@ -2819,7 +2826,7 @@ function tkCard(t,withRec){
       }
       if(t.meC){
         links+='<span class="link" onclick="tkWho(\''+t.id+'\')">Reassign</span>'+
-          '<span class="link" onclick="tkCancel(\''+t.id+'\')">Cancel task</span>';
+          '<span class="link danger" onclick="tkCancel(\''+t.id+'\')">Cancel task</span>';
       }
     }
     if(bits)h+='<div class="tkact">'+bits+'</div>';
@@ -3060,9 +3067,9 @@ function actionCard(){
   if(!shOn())return "";
   var n=actionRecs().length;
   if(!n)return "";
-  return '<div class="card" onclick="go(\'actions\')"><div class="opdot" style="color:var(--bad);border-color:var(--bad)">!</div>'+
-    '<div class="cmain"><div class="cname">'+n+' record'+(n===1?'':'s')+' with open actions</div>'+
-    '<div class="csub">Notes marked "action needed" that nobody has marked done</div></div>'+
+  return '<div class="card" onclick="go(\'actions\')"><div class="actbadge">'+n+'</div>'+
+    '<div class="cmain"><div class="cname">Record'+(n===1?'':'s')+' with open actions</div>'+
+    '<div class="csub">Notes marked "action needed" not yet done</div></div>'+
     '<div class="chev">&#8250;</div></div>';
 }
 function renderActions(){
@@ -3092,13 +3099,13 @@ function shLine(){
   if(!shOn())return "";
   var t=!shSigned()?'Shared notes: <span class="link" onclick="go(\'shared\')">sign in…</span>':
     (AU.dead?'Shared notes: <span class="link" onclick="go(\'shared\')">sign in again</span>'+(OB.length?' · '+OB.length+' waiting to send':''):
-      'Shared notes · '+esc(AU.name)+(OB.length?' · '+OB.length+' waiting to send':'')+
+      'Signed in as '+esc(AU.name)+(OB.length?' · '+OB.length+' waiting to send':'')+
       ' · <span class="link" onclick="go(\'shared\')">details</span>');
   return '<div class="hint" style="padding:10px 20px 0">'+t+'</div>';
 }
 function renderShared(){
   tkBadge();
-  var h='<div class="seclabel">Shared notes and checks</div>';
+  var h='<div class="seclabel">Account and sync</div>';
   if(!shOn()){
     main.innerHTML=h+'<div class="notes">This data file has no shared-notes connection, so notes and shared checks are off. '+
       'The administrator turns them on in the build settings.</div>';
@@ -3123,7 +3130,7 @@ function renderShared(){
     '<input id="shem" class="dsinput" type="email" inputmode="email" autocomplete="username" spellcheck="false" '+
       'placeholder="Email" value="'+esc((AU&&AU.email)||"")+'">'+
     '<input id="shpw" class="dsinput" type="password" autocomplete="current-password" placeholder="Password">'+
-    '<button class="copybtn" id="shgo">Sign in</button><div class="stamp" id="shmsg"></div>';
+    '<button class="copybtn primary" id="shgo">Sign in</button><div class="stamp" id="shmsg"></div>';
   var msg=document.getElementById("shmsg"), pw=document.getElementById("shpw");
   function go2(){
     var em=document.getElementById("shem").value.trim();
@@ -3915,7 +3922,7 @@ function renderOperator(i){
   h+=actBlock("o",i,clKey(o));
   h+=lkBlock("o",i);
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
-  h+='<div class="seclabel">Vehicles in this name ('+veh.length+')</div>';
+  h+='<div class="seclabel">Registered in this name ('+veh.length+')</div>';
   const sn=(o._vsn||[]).map(ix=>V[ix]).filter(Boolean);
   h+=veh.length?veh.map(x=>vehCard(x)).join(""):'<div class="empty">'+(sn.length?
     'None confirmed for this operator — see unconfirmed vehicles below.':
