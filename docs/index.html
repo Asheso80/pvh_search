@@ -519,7 +519,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v41 · 2026-11-01";
+var APP_VERSION="v42 · 2026-11-11";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 /* The record counts are on the home screen; the header keeps to one line. */
@@ -988,7 +988,11 @@ function shRefresh(){
       AU.exp=Math.floor(Date.now()/1000)+(r.json.expires_in||3600); AU.dead=false; auSave();
       return true;
     }
-    if(r.status>=400&&r.status<500&&r.status!==408&&r.status!==429){AU.dead=true; auSave(); return false;}
+    if(r.status>=400&&r.status<500&&r.status!==408&&r.status!==429){
+      AU.dead=true; auSave();
+      if(window.__phWipe)window.__phWipe();   /* the sign-in is over: saved photos go with it */
+      return false;
+    }
     throw {net:true};
   },function(e){REFRESHING=null; throw e;});
   return REFRESHING;
@@ -2150,7 +2154,8 @@ function phLoad(id){
   var p=phGet(id).then(function(b){
     if(b)return b;
     return shBin("/storage/v1/object/authenticated/operator-photos/"+id+".jpg").then(function(r){
-      if(r.status===200&&r.blob&&r.blob.size&&/^image\//.test(r.blob.type)){phPut(id,r.blob); return r.blob;}
+      /* Keep it on the device only if nothing was cleared while it was on its way (a sign-out, say). */
+      if(r.status===200&&r.blob&&r.blob.size&&/^image\//.test(r.blob.type)){if(g0===PH.gen)phPut(id,r.blob); return r.blob;}
       if(r.status===400||r.status===404)PH.none[id]=1;   /* Supabase says a missing object 400 or 404 */
       return null;
     });
@@ -2163,7 +2168,7 @@ function phLoad(id){
 }
 function phHydrate(el){
   var o=O[+el.getAttribute("data-pho")];
-  if(!o||!SH||!shSigned()||AU.dead){el.setAttribute("data-phs","w"); return;}   /* waiting for a sign-in */
+  if(!o||!SH||!shSigned()||AU.dead||PH.off){el.setAttribute("data-phs","w"); return;}   /* waiting for a sign-in (or for access) */
   var g=PH.gen;
   phId(o).then(function(id){
     if(!id)return;
@@ -2247,7 +2252,17 @@ function phSync(force){
     });
   }
   var nowS=Math.floor(Date.now()/1000), cleared=false;
-  page(0).then(function(){
+  /* Saved photos are shown without asking the bucket, so first ask whether this officer is still
+     enabled (their own `profiles` row -- the rule the bucket itself reads by). A clear "no row"
+     wipes what the device holds; anything unclear (no signal, an error) changes nothing. */
+  var allowed=AU.uid?shApi("GET","/rest/v1/profiles?select=id&id=eq."+encodeURIComponent(AU.uid)).then(function(p){
+    return !(p.status===200&&Array.isArray(p.json)&&!p.json.length);
+  }):Promise.resolve(true);
+  allowed.then(function(ok){
+    if(!ok){PH.off=true; phWipe(); PH_SYNC.last=Date.now(); throw {cut:true};}
+    if(PH.off){PH.off=false; phKick();}
+    return page(0);
+  }).then(function(){
     if(!newest){jset(PH_SEEN_KEY,{t:1,n:[],e:PH_EPOCH,r:nowS});}   /* no usable times from the server: stop asking to clear */
     else{
       if(since===null||flood){phClear(); cleared=true;}              /* nothing noted yet, or too many changed to list */
@@ -2287,7 +2302,8 @@ function phReconcile(){
   }).then(function(gone){if(gone.length)phForget(gone);});
 }
 window.__phScan=phScan; window.__phKick=phKick; window.__phZoom=phZoom; window.__phZoomClose=phZoomClose;
-window.__phSync=phSync;
+window.__phSync=phSync; window.__phWipe=phWipe;
+if(AU&&AU.dead)phWipe();   /* a sign-in that ended earlier: nothing of it stays on the device */
 if(!window.__phWired){
   window.__phWired=true;
   document.addEventListener("visibilitychange",function(){
