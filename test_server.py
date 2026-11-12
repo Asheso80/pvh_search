@@ -132,6 +132,8 @@ def app_html():
 # Drawn cartoon faces for the first three made-up operators (the fourth has none, to
 # show the initials fallback). Files are named as the real bucket's are: the first 24
 # hex characters of SHA-256("pvh-photo:" + the operator's record key).
+CUT_OFF = []      # non-empty: no officer has a profiles row (/__test/cut_off)
+ENDED = []        # non-empty: every sign-in has ended (/__test/end_session)
 PHOTO_HITS = {}   # file name -> times the "bucket" was asked for it (shown at /__test/photo_hits)
 
 
@@ -394,7 +396,7 @@ class Handler(BaseHTTPRequestHandler):
     def signed_in(self):
         a = self.headers.get("Authorization", "")
         uid = a[7:] if a.startswith("Bearer ") else ""
-        return uid if uid in TOKENS else None
+        return uid if uid in TOKENS and not ENDED else None
 
     def table(self, path):
         t = path[len("/rest/v1/"):] if path.startswith("/rest/v1/") else ""
@@ -420,7 +422,13 @@ class Handler(BaseHTTPRequestHandler):
             del PHOTOS[name]
             PHOTO_TIMES.pop(name, None)
             return self.send(200, {"deleted": name, "left": len(PHOTOS)})
-        if path == "/__test/fake_changes":       # a burst: n extra photos all changed just now
+        if path == "/__test/cut_off":            # every officer's profiles row removed (on=1) or put back (on=0)
+            CUT_OFF[:] = [1] if query.get("on", ["1"])[0] == "1" else []
+            return self.send(200, {"cut_off": bool(CUT_OFF)})
+        if path == "/__test/end_session":        # every sign-in ended: tokens and refreshes are refused (on=0 undoes it)
+            ENDED[:] = [1] if query.get("on", ["1"])[0] == "1" else []
+            return self.send(200, {"ended": bool(ENDED)})
+        if path == "/__test/fake_changes":     # a burst: n extra photos all changed just now
             for k in range(int(query.get("n", ["60"])[0])):
                 FAKE_NAMES.append(("%024x" % (0xAB0000 + k) + ".jpg", now()))
             return self.send(200, {"fake_entries": len(FAKE_NAMES)})
@@ -429,7 +437,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(400, {"statusCode": "400", "error": "Unauthorized", "message": "Invalid JWT"})
             name = path.rsplit("/", 1)[1]
             PHOTO_HITS[name] = PHOTO_HITS.get(name, 0) + 1
-            if name in PHOTOS:
+            if name in PHOTOS and not CUT_OFF:
                 return self.send(200, PHOTOS[name], "image/jpeg")
             # The real storage API answers a missing object with HTTP 400 and this body.
             return self.send(400, {"statusCode": "404", "error": "not_found", "message": "Object not found"})
@@ -440,7 +448,7 @@ class Handler(BaseHTTPRequestHandler):
         if not uid:
             return self.send(401, {"message": "JWT expired"})
         if t == "profiles":
-            return self.send(200, [{"display_name": TOKENS[uid]}] if eq(query, "id") == uid else [])
+            return self.send(200, [{"display_name": TOKENS[uid]}] if eq(query, "id") == uid and not CUT_OFF else [])
         with LOCK:
             rows = read(t, query)
         self.send(200, rows)
@@ -453,7 +461,7 @@ class Handler(BaseHTTPRequestHandler):
             if grant == "password" and isinstance(b, dict) and b.get("email") in USERS and b.get("password") == PASSWORD:
                 uid = USERS[b["email"]][1]
                 return self.send(200, {"access_token": uid, "refresh_token": uid, "expires_in": 3600, "user": {"id": uid}})
-            if grant == "refresh_token" and isinstance(b, dict) and b.get("refresh_token") in TOKENS:
+            if grant == "refresh_token" and isinstance(b, dict) and b.get("refresh_token") in TOKENS and not ENDED:
                 return self.send(200, {"access_token": b["refresh_token"], "refresh_token": b["refresh_token"],
                                        "expires_in": 3600})
             return self.send(400, {"error_description": "Invalid login credentials"})
@@ -462,7 +470,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/storage/v1/object/list/operator-photos":
             if not self.signed_in():
                 return self.send(400, {"statusCode": "400", "error": "Unauthorized", "message": "Invalid JWT"})
-            return self.send(200, photo_listing(b))
+            return self.send(200, [] if CUT_OFF else photo_listing(b))   # no read access lists as empty
         if path == "/rest/v1/rpc/pvh_people":
             if not self.signed_in():
                 return self.send(401, {"message": "JWT expired"})
