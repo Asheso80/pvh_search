@@ -118,7 +118,10 @@ def made_up_records(B):
 
 def app_html():
     B = load_builder()
-    payload = json.dumps(made_up_records(B), separators=(",", ":")).replace("</", "<\\/")
+    records = made_up_records(B)
+    if OLD_DAYS[0] > 0:   # a real build stamp, as the builder writes it, from that many days back
+        records["built"] = (datetime.datetime.now() - datetime.timedelta(days=OLD_DAYS[0])).strftime("%b %d, %Y %H:%M")
+    payload = json.dumps(records, separators=(",", ":")).replace("</", "<\\/")
     # The pretend server is wherever the page came from, so this also works
     # through a tailnet address.
     boot = ('var d=JSON.parse(document.getElementById("data").textContent);'
@@ -134,6 +137,7 @@ def app_html():
 # hex characters of SHA-256("pvh-photo:" + the operator's record key).
 CUT_OFF = []      # non-empty: no officer has a profiles row (/__test/cut_off)
 ENDED = []        # non-empty: every sign-in has ended (/__test/end_session)
+OLD_DAYS = [0]    # above 0: the data's build stamp is that many days old (/__test/old_data)
 PHOTO_HITS = {}   # file name -> times the "bucket" was asked for it (shown at /__test/photo_hits)
 
 
@@ -425,7 +429,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/__test/cut_off":            # every officer's profiles row removed (on=1) or put back (on=0)
             CUT_OFF[:] = [1] if query.get("on", ["1"])[0] == "1" else []
             return self.send(200, {"cut_off": bool(CUT_OFF)})
-        if path == "/__test/end_session":        # every sign-in ended: tokens and refreshes are refused (on=0 undoes it)
+        if path == "/__test/old_data":           # the data was built `days` ago (days=0 undoes it): the old-data banner
+            OLD_DAYS[:] = [int(query.get("days", ["6"])[0])]
+            return self.send(200, {"data_built_days_ago": OLD_DAYS[0]})
+        if path == "/__test/end_session":      # every sign-in ended: tokens and refreshes are refused (on=0 undoes it)
             ENDED[:] = [1] if query.get("on", ["1"])[0] == "1" else []
             return self.send(200, {"ended": bool(ENDED)})
         if path == "/__test/fake_changes":     # a burst: n extra photos all changed just now

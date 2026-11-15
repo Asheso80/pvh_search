@@ -24,9 +24,12 @@ Behaviour:
   - Only one copy runs at a time (file lock). Logging in again while it's
     already running, or the Startup shortcut firing twice, will not
     double-run the pull.
-  - Real gap: if you log out (not just lock the screen) or the machine
-    restarts and you're not back before 07:30, that day's run is missed.
-    Same exposure a "logged on" Task Scheduler task would have had.
+  - If you log out (not just lock the screen) or the machine restarts and
+    you're not back before 07:30, that day's run happens a few minutes after
+    you next sign in instead. The same catch-up covers a 07:30 run that
+    failed, the next time the daemon starts that day. A day with no sign-in
+    at all still has no run; the app warns officers once its data is three
+    days old.
   - logs\daemon.log only says when each run happened and how it ended. What
     the run did -- including the build's data warnings, which name owners
     and operators -- is in that day's pull_and_build log, kept 90 days. This
@@ -48,6 +51,7 @@ LOG_DIR = SCRIPT_DIR / "logs"
 LOCK_FILE = SCRIPT_DIR / "daemon.lock"
 RUN_AT_HOUR, RUN_AT_MINUTE = 7, 30  # 7:30 AM -- adjust if you want it closer to 8:00
 LOG_KEEP_DAYS = 90  # same as pull_and_build_pvh.py
+CATCH_UP_DELAY = 180  # seconds to wait after a late start before the catch-up run
 
 
 def setup_logging():
@@ -87,6 +91,25 @@ def next_run_time(now):
     return target
 
 
+def ran_today(now):
+    """True when today's pull and build has already finished properly -- by the
+    daemon or by Run_PVH_Pull_Now.bat. Goes by the last line a good run writes
+    to its dated log, so a run that failed earlier today does not count."""
+    path = LOG_DIR / f"pull_and_build_{now:%Y-%m-%d}.log"
+    try:
+        return "=== Done." in path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def catch_up_due(now):
+    """Started after today's run time with no good run today: the PC was off or
+    signed out at 07:30, or the run failed. Without this the phones would keep
+    yesterday's data until tomorrow morning."""
+    target = now.replace(hour=RUN_AT_HOUR, minute=RUN_AT_MINUTE, second=0, microsecond=0)
+    return now >= target and not ran_today(now)
+
+
 def run_pipeline(log):
     python_exe = sys.executable.replace("pythonw.exe", "python.exe")
     log.info("Target time reached -- running pull_and_build_pvh.py")
@@ -110,6 +133,15 @@ def main():
         log.info("Another instance is already running -- exiting.")
         return
     log.info("=== PVH daemon started ===")
+
+    if catch_up_due(datetime.now()):
+        # Just signed in: give the network, OneDrive and Dropbox a few minutes
+        # to come up before pulling.
+        log.info(f"Started after {RUN_AT_HOUR:02d}:{RUN_AT_MINUTE:02d} and today's run has not finished -- "
+                 f"running it in {CATCH_UP_DELAY // 60} minutes.")
+        time.sleep(CATCH_UP_DELAY)
+        if catch_up_due(datetime.now()):   # unless it was run by hand meanwhile
+            run_pipeline(log)
 
     while True:
         target = next_run_time(datetime.now())

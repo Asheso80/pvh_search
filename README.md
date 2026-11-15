@@ -59,7 +59,8 @@ device picks up the new app the next time it opens with a signal. With no signal
 runs from its cached copy.
 
 To confirm a device is current, check the version at the bottom of the home screen.
-Bump `APP_VERSION` in the template whenever you change the app.
+The build numbers the app itself: a build after any change to the template issues
+the next version and records it in `app_version.json`, which is committed with it.
 
 ---
 
@@ -80,7 +81,10 @@ shared-notes server.
 ## Features
 
 - **Search and status.** Green is valid, amber expires within 30 days, red is
-  expired or missing. A flagged-records screen collects everything overdue.
+  expired or missing. The status filter on the home screen lists the vehicles
+  with something expired, most overdue first.
+- **Old data is flagged.** If the data on a device is more than three days old,
+  every page says so.
 - **Empty results say so.** A search that finds nothing is reported explicitly,
   because a record not in the active list is worth verifying rather than clearing.
 - **Shared notes.** Officers can add notes and actions to records, with author and
