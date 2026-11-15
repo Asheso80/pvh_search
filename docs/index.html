@@ -395,6 +395,11 @@ a.tel{color:var(--accent);text-decoration:none}
   font-size:14px;line-height:1.45;color:var(--text);display:none;
   box-shadow:0 4px 14px rgba(0,0,0,.18)}
 #toast.ok{border-color:var(--ok);border-left-color:var(--ok)}
+/* Old data: shown on every page, because a "valid" badge is only as good as
+   the day the data was built. */
+#stale{margin:10px 12px 0;padding:10px 12px;border-radius:10px;font-size:14px;font-weight:700;
+  line-height:1.4;color:var(--warn);background:rgba(245,190,74,.14);border:1px solid rgba(245,190,74,.4)}
+#stale .link{font-weight:700;white-space:nowrap}
 #toast .link{font-weight:700;white-space:nowrap}
 .dsinput{width:100%;height:46px;border:1px solid var(--line);border-radius:10px;
   background:var(--panel);color:var(--text);font-size:15px;padding:0 12px;
@@ -482,6 +487,7 @@ a.tel{color:var(--accent);text-decoration:none}
     </div>
   </header>
   <div id="toast" style="display:none"></div>
+  <div id="stale" role="status" style="display:none"></div>
   <div class="sheetbg" id="duesheet" style="display:none">
     <div class="sheet" role="dialog" aria-label="Due date">
       <div class="seclabel" style="margin-top:0">Due date</div>
@@ -519,7 +525,7 @@ a.tel{color:var(--accent);text-decoration:none}
 "use strict";
 /* Bumped whenever the app itself changes, so a phone can be checked against
    what was deployed. Shown on the home screen under the data build stamp. */
-var APP_VERSION="v42 · 2026-11-11";
+var APP_VERSION="v43 · 2026-11-15";
 function boot(DB){
 const V = DB.vehicles, O = DB.operators, W = DB.owners||[];
 /* The record counts are on the home screen; the header keeps to one line. */
@@ -895,6 +901,19 @@ function scSave(){
   });
   NIDX=null; jset(SC_KEY,SC);
 }
+/* Access has ended (the sign-in was refused for good, or the officer's account
+   is no longer enabled): the shared notes, tasks, links and history kept on this
+   device go, the same as saved photos do. What the officer wrote and has not
+   sent yet stays in the outbox. Nothing is lost for a person who is let back
+   in: the next sync fetches it all again. */
+function shForget(redraw){
+  SC=emptySC(); NIDX=null; jset(SC_KEY,SC);
+  if(redraw)setTimeout(function(){if(!typing())keepScroll();},0);
+}
+function shCut(){
+  var was=SYNC.cut; SYNC.cut=true;
+  if(!was||Object.keys(SC.notes).length||Object.keys(SC.tasks).length||Object.keys(SC.links).length)shForget(true);
+}
 function obSave(){
   NIDX=null;
   if(!jset(OB_KEY,OB))tellBox("Out of storage","This device is out of storage, so that could not be saved. Free some space and try again.");
@@ -991,6 +1010,7 @@ function shRefresh(){
     if(r.status>=400&&r.status<500&&r.status!==408&&r.status!==429){
       AU.dead=true; auSave();
       if(window.__phWipe)window.__phWipe();   /* the sign-in is over: saved photos go with it */
+      shForget(true);                         /* and the shared notes, tasks and links kept here */
       return false;
     }
     throw {net:true};
@@ -1960,7 +1980,8 @@ function agoShort(ts){
 }
 function shStatus(){
   var p=[];
-  if(SYNC.busy)p.push("Syncing…");
+  if(SYNC.cut)p.push("This account is no longer enabled for shared notes. Ask the administrator.");
+  else if(SYNC.busy)p.push("Syncing…");
   else if(SYNC.err)p.push(esc(SYNC.err));
   else if(SC.at)p.push("Synced "+esc(agoShort(SC.at)));
   else p.push("Not synced yet");
@@ -1971,7 +1992,7 @@ function shLine(){
   if(!shOn())return "";
   var t=!shSigned()?'Shared notes: <span class="link" onclick="go(\'shared\')">sign in…</span>':
     (AU.dead?'Shared notes: <span class="link" onclick="go(\'shared\')">sign in again</span>'+(OB.length?' · '+OB.length+' waiting to send':''):
-      'Signed in as '+esc(AU.name)+(OB.length?' · '+OB.length+' waiting to send':'')+
+      (SYNC.cut?'Shared notes: this account is no longer enabled':'Signed in as '+esc(AU.name))+(OB.length?' · '+OB.length+' waiting to send':'')+
       ' · <span class="link" onclick="go(\'shared\')">details</span>');
   return '<div class="hint" style="padding:10px 20px 0">'+t+'</div>';
 }
@@ -2259,8 +2280,9 @@ function phSync(force){
     return !(p.status===200&&Array.isArray(p.json)&&!p.json.length);
   }):Promise.resolve(true);
   allowed.then(function(ok){
-    if(!ok){PH.off=true; phWipe(); PH_SYNC.last=Date.now(); throw {cut:true};}
+    if(!ok){PH.off=true; phWipe(); shCut(); PH_SYNC.last=Date.now(); throw {cut:true};}
     if(PH.off){PH.off=false; phKick();}
+    if(SYNC.cut){SYNC.cut=false; shSync(true);}   /* let back in: fetch the shared copy again */
     return page(0);
   }).then(function(){
     if(!newest){jset(PH_SEEN_KEY,{t:1,n:[],e:PH_EPOCH,r:nowS});}   /* no usable times from the server: stop asking to clear */
@@ -2303,7 +2325,7 @@ function phReconcile(){
 }
 window.__phScan=phScan; window.__phKick=phKick; window.__phZoom=phZoom; window.__phZoomClose=phZoomClose;
 window.__phSync=phSync; window.__phWipe=phWipe;
-if(AU&&AU.dead)phWipe();   /* a sign-in that ended earlier: nothing of it stays on the device */
+if(AU&&AU.dead){phWipe(); shForget(false);}   /* a sign-in that ended earlier: nothing of it stays on the device */
 if(!window.__phWired){
   window.__phWired=true;
   document.addEventListener("visibilitychange",function(){
@@ -2889,6 +2911,28 @@ function renderOwner(i){
   main.innerHTML=h;
 }
 
+/* ---------- old data ---------- */
+/* The daily build can fail quietly (the PC was off, the report server was down),
+   and the phone then goes on showing the last file it got. Past STALE_HOURS the
+   app says so on every page. The build stamp is text like "Nov 15, 2026 07:30",
+   written in the build PC's local time, which is the phones' too. */
+var STALE_HOURS=72;
+function builtAt(){
+  var m=/^([A-Za-z]{3})[a-z]* (\d{1,2}), (\d{4}) (\d{1,2}):(\d{2})/.exec(String(DB.built||""));
+  if(!m)return null;
+  var mo=["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].indexOf(m[1].toLowerCase());
+  return mo<0?null:new Date(+m[3],mo,+m[2],+m[4],+m[5]);
+}
+function staleBar(){
+  var el=document.getElementById("stale"); if(!el)return;
+  var b=builtAt(), hrs=b?(Date.now()-b.getTime())/36e5:0;
+  if(hrs<STALE_HOURS){el.style.display="none"; return;}
+  el.innerHTML="&#9888; This data is "+Math.floor(hrs/24)+" days old (built "+esc(DB.built)+
+    "). A licence or permit shown as valid may have changed since."+
+    (window.__SHELL__?' <span class="link" onclick="window.__checkNow()">Check for new data</span>':'');
+  el.style.display="block";
+}
+
 /* ---------- routing ---------- */
 const q=document.getElementById("q"), clr=document.getElementById("clr");
 function go(route){location.hash="#/"+route;}
@@ -2902,6 +2946,7 @@ function route(){
   const m=/^(v|o|w)\/(\d+)$/.exec(h);
   const sp=(h==="shared"||h==="actions"||h==="tasks");
   tkBadge();
+  staleBar();
   window.scrollTo(0,0);
   document.getElementById("back").style.display=(m||sp)?"flex":"none";
   document.body.classList.toggle("inrec",!!(m||sp));
@@ -3269,7 +3314,7 @@ var DKEY="pvh_data", UKEY="pvh_data_url", CKEY="pvh_last_check", CHECK_MS=600000
    fires for a card tap, a settings link, typing in search, all of it.
    A cold-start auto-update is only safe to apply without asking while this
    is still false — see check("cold"). */
-var interacted=false;
+var interacted=false, BOOTED=false;   /* BOOTED: boot() has run in this page */
 function markInteracted(){interacted=true;}
 document.addEventListener("pointerdown",markInteracted,{once:true,passive:true});
 document.addEventListener("keydown",markInteracted,{once:true});
@@ -3446,6 +3491,17 @@ function showImport(msg){
         var d=JSON.parse(r.result);
         if(!d.vehicles||!d.operators)throw 0;
         lsSet(DKEY,r.result);
+        /* The app is already running: starting it a second time in the same
+           page would attach every button twice (see applyDataAndReload), so
+           load the new file by reloading instead. */
+        if(BOOTED){
+          if(lsGet(DKEY)!==r.result){
+            showImport("This device could not save that file (its storage may be full), so the data was not changed.");
+            return;
+          }
+          lsSet(JKEY,d.built||"");location.reload();return;
+        }
+        BOOTED=true;
         boot(d);
       }catch(e){showImport("That file is not a valid PVH data file. Try again.");}
     };
@@ -3462,7 +3518,7 @@ function dueForCheck(){
   if(lsGet("pvh_theme")!=="dark")document.body.classList.add("light");
   var saved=lsGet(DKEY), loaded=false;
   if(saved){
-    try{boot(JSON.parse(saved));loaded=true;}
+    try{boot(JSON.parse(saved));loaded=true;BOOTED=true;}
     catch(e){lsDel(DKEY);}
   }
   var justUpdated=lsGet(JKEY);
@@ -3472,7 +3528,7 @@ function dueForCheck(){
   }else if(lsGet(UKEY)){
     mainEl().innerHTML='<div class="hint" style="padding-top:50px">Loading data from the saved link…</div>';
     fetchData(lsGet(UKEY)).then(function(res){
-      lsSet(DKEY,res.text);stampCheck();boot(res.data);
+      lsSet(DKEY,res.text);stampCheck();BOOTED=true;boot(res.data);
     }).catch(function(e){
       showImport("Could not load from the saved link ("+eh(e.message)+"). Load the file by hand, or "+
         '<span class="link" onclick="window.__datasrc()">check the link</span>:');
