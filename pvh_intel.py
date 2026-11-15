@@ -14,13 +14,16 @@ what the app itself can read, with the same public key the app uses.
 
 Writes to intel/ (gitignored -- it is personal information):
     PVH_Intel.xlsx      Who drives what, People, Driver-Vehicle, Associations,
-                        Profiles, Links, Notes, Activity, Monthly, Officers,
+                        Profiles, Links, App links, Tasks, Notes, Activity,
+                        Monthly, Officers,
                         Hour x Weekday
     PVH_Intel_Map.html  the relationship map, view only
     link_reviews.csv    your links and decisions -- kept across every rebuild
     gephi_nodes.csv / gephi_edges.csv   Gephi "Import spreadsheet" format
     PVH_Intel.graphml   Gephi, Cytoscape, yEd, Neo4j
-    snapshot.json       the raw pull, for --offline reruns
+    snapshot.json       the raw pull, for --offline reruns: notes, stops, queries,
+                        app links, tasks and the history of every change
+    backups/            a dated copy of each pull, the last 30 days of them
 
 Then the map opens in the browser from a small server on this PC only
 (127.0.0.1), where links can be made and removed: a person drives a vehicle,
@@ -31,6 +34,7 @@ How links are found:
     On file        owner -> vehicle, from the PVH records
     Note mention   a note on one record names another: plate, vehicle or
                    operator licence number, "deck 211", or a full name
+    Officer link   an officer linked the operator and the vehicle in the app
     Same encounter one officer touched a vehicle and a person within 15
                    minutes, with a Stop or Note on one of them, and no more
                    than 2 vehicles / 2 people in that span (desk lookups are
@@ -59,6 +63,11 @@ DATA_PATH = os.path.join(HERE, "PVH_data.json")
 TZ = ZoneInfo("America/Halifax")
 ENCOUNTER_SECS = 15 * 60
 TABLES = ("notes", "checks", "queries")
+# Pulled as well, so snapshot.json holds everything the shared database does:
+# the links officers make in the app and the tasks (both used below), and the
+# history of every edit, removal and change (kept for the record only).
+MORE_TABLES = ("links", "tasks", "note_events", "link_events", "task_events")
+BACKUP_KEEP = 30   # dated copies of the pull kept in intel/backups
 
 
 # ------------------------------------------------------------------ helpers
@@ -203,12 +212,14 @@ def pull(cfg):
         except (OSError, ValueError):
             pass
     snap = {"pulled_at": datetime.datetime.now(TZ).isoformat(), "by": email}
-    for t in TABLES:
+    for t in TABLES + MORE_TABLES:
         rows, off = [], 0
         while True:
-            st, page = http("GET", url + "/rest/v1/" + t + "?select=*&order=created_at.asc&limit=1000&offset=" + str(off), key, token)
-            if st == 404 and t == "queries":
-                print("  queries table not found -- run supabase/003_queries.sql. Continuing without it.")
+            # id breaks ties, so rows written in the same instant cannot be
+            # skipped or repeated between pages.
+            st, page = http("GET", url + "/rest/v1/" + t + "?select=*&order=created_at.asc,id.asc&limit=1000&offset=" + str(off), key, token)
+            if st == 404 and t not in ("notes", "checks"):
+                print("  " + t + " table not found -- its SQL file in supabase/ has not been run. Continuing without it.")
                 break
             if st != 200 or not isinstance(page, list):
                 sys.exit("Could not read " + t + ": HTTP " + str(st) + " " + s_(page))
@@ -488,6 +499,19 @@ def analyse(model, snap):
                      {"officer": a["officer"], "when": a["when"],
                       "how": a["kind"] + " + " + b["kind"] + " within " + str(int((b["when"] - a["when"]).total_seconds() // 60)) + " min",
                       "text": a["text"] or b["text"], "confidence": "likely"})
+
+    # Links officers made in the app: "this operator drives this vehicle". The
+    # most direct evidence there is, so it counts as exact. One that was removed
+    # in the app is not evidence; it is still listed on the App links sheet.
+    for r in snap.get("links", []):
+        if not r.get("active") or not r.get("op_key") or not r.get("veh_key"):
+            continue
+        a = model.node_for(s_(r.get("op_key")), s_(r.get("op_label")))
+        b = model.node_for(s_(r.get("veh_key")), s_(r.get("veh_label")))
+        when = parse_ts(r.get("updated_at"))
+        who = s_(r.get("updated_name")) or "?"
+        link(a["id"], b["id"], "Officer link", when,
+             {"officer": who, "when": when, "how": "Linked in the app by " + who, "text": "", "confidence": "exact"})
 
     for e in events:
         model.nodes[e["node"]]["events"].append(e)
@@ -774,7 +798,7 @@ def active_set(model, links):
 
 
 # ------------------------------------------------------------------ outputs
-def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
+def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta, snap=None):
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.formatting.rule import ColorScaleRule
@@ -824,6 +848,8 @@ def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
         ["Associations", "One row per two people linked by a note or by you."],
         ["Profiles", "Every record with activity: counts, last activity, who, and what it links to."],
         ["Links", "Every link with its evidence."],
+        ["App links", "Every operator-vehicle link officers made in the app, including the ones since removed there."],
+        ["Tasks", "Every task from the app: open ones first, by due date."],
         ["Notes", "All notes, with the records each one mentions."],
         ["Activity", "One row per query / stop / note -- use for pivots."],
         ["Monthly", "Activity per record per month."],
@@ -834,6 +860,7 @@ def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
         ["On file", "Owner -> vehicle in the PVH records."],
         ["Note mention", "A note on one record names another (plate, licence no., deck, full name)."],
         ["Same encounter", "One officer touched a vehicle and a person within 15 minutes, with a Stop or Note on one of them. Spans with more than 2 vehicles or 2 people (desk lookups) are ignored."],
+        ["Officer link", "An officer linked the operator and the vehicle in the app. Counts as exact."],
         ["My link", "A link you made yourself in the map."],
         ["Confidence", "exact = one match; likely = deck number or encounter; possible = several records share that name or number -- verify."], [],
         ["Status"],
@@ -1050,6 +1077,53 @@ def write_xlsx(path, model, events, notes, links, pairs, officers, act, meta):
                          ev.get("text", "")[:500]])
     sheet("Links", ["Record A", "Type A", "Record B", "Type B", "Link", "When", "Officer", "Confidence", "How found", "Note"],
           rows, {"Record A": 30, "Record B": 30, "When": 18, "How found": 36, "Note": 60}, wrap_cols=("Note",))
+
+    # --- App links and Tasks: straight from the app, nothing inferred
+    snap = snap or {}
+    long_ago = datetime.datetime.min.replace(tzinfo=TZ)
+
+    def rec_label(key, fallback):
+        n = N.get(model.resolve(s_(key)))
+        return n["label"] if n else (s_(fallback) or s_(key))
+
+    rows = []
+    newest = sorted(snap.get("links", []), key=lambda r: parse_ts(r.get("updated_at")) or long_ago, reverse=True)
+    for r in sorted(newest, key=lambda r: not r.get("active")):
+        P = pairs.get(s_(r.get("op_key")) + " | " + s_(r.get("veh_key")))
+        rows.append(["Active" if r.get("active") else "Removed in the app",
+                     rec_label(r.get("op_key"), r.get("op_label")), rec_label(r.get("veh_key"), r.get("veh_label")),
+                     s_(r.get("updated_name")), fmt_when(parse_ts(r.get("updated_at"))),
+                     s_(r.get("created_name")), fmt_when(parse_ts(r.get("created_at"))),
+                     P["status"] if P else "", s_(r.get("id"))])
+    ws = sheet("App links", ["In the app", "Operator", "Vehicle", "Last changed by", "Last changed", "First linked by",
+                             "First linked", "Status here", "Link ID"], rows,
+               {"In the app": 20, "Operator": 30, "Vehicle": 44, "Last changed by": 18, "Last changed": 18,
+                "First linked by": 18, "First linked": 18, "Status here": 18, "Link ID": 34})
+    for row in ws.iter_rows(min_row=2):
+        if row[0].value != "Active":
+            for c in row:
+                c.fill = grey
+
+    today = now.strftime("%Y-%m-%d")
+    t_order = {"open": 0, "done": 1, "cancelled": 2}
+    rows = []
+    for r in sorted(snap.get("tasks", []), key=lambda r: (t_order.get(s_(r.get("status")), 3), s_(r.get("due_date")))):
+        st, due = s_(r.get("status")), s_(r.get("due_date"))
+        shown = "Overdue" if st == "open" and due and due < today else st.capitalize()
+        closed = r.get("done_at") or r.get("cancelled_at")
+        rows.append([shown, due, s_(r.get("priority")).capitalize(), s_(r.get("title")),
+                     rec_label(r.get("rec_key"), r.get("rec_label")), s_(r.get("assignee_name")), s_(r.get("author_name")),
+                     fmt_when(parse_ts(r.get("created_at"))), fmt_when(parse_ts(closed)),
+                     s_(r.get("done_by") or r.get("cancelled_by")), s_(r.get("outcome")), s_(r.get("description"))[:500]])
+    ws = sheet("Tasks", ["Status", "Due", "Priority", "Title", "Record", "Assigned to", "Created by", "Created",
+                         "Finished", "Finished by", "Outcome", "Description"], rows,
+               {"Title": 40, "Record": 34, "Assigned to": 16, "Created by": 16, "Created": 18, "Finished": 18,
+                "Finished by": 16, "Outcome": 40, "Description": 60}, wrap_cols=("Title", "Outcome", "Description"))
+    for row in ws.iter_rows(min_row=2):
+        f = red if row[0].value == "Overdue" else grey if row[0].value in ("Done", "Cancelled") else None
+        if f:
+            for c in row:
+                c.fill = f
 
     rows = []
     for nt in sorted(notes, key=lambda x: x["when"] or now, reverse=True):
@@ -1541,7 +1615,7 @@ def rebuild(state):
     act, ring = active_set(model, links)
     note = ""
     try:
-        write_xlsx(state["xl"], model, events, notes, links, pairs, officers, act, state["meta"])
+        write_xlsx(state["xl"], model, events, notes, links, pairs, officers, act, state["meta"], state["snap"])
     except PermissionError:
         note = "PVH_Intel.xlsx is open in Excel, so it was not updated. Close it; it updates with your next change."
     write_gephi(state["out"], model, links, ring, pairs)
@@ -1665,6 +1739,24 @@ def serve(state, port=0, browser=True):
     httpd.server_close()
 
 
+def keep_backup(snap, out_dir):
+    """A dated copy of each pull, the last BACKUP_KEEP days of them. snapshot.json
+    is overwritten every run, so by itself it would not survive a pull made after
+    something had gone missing from the shared database; these do."""
+    folder = os.path.join(out_dir, "backups")
+    os.makedirs(folder, exist_ok=True)
+    name = "snapshot_" + datetime.datetime.now(TZ).strftime("%Y-%m-%d") + ".json"
+    with open(os.path.join(folder, name), "w", encoding="utf-8") as f:
+        json.dump(snap, f)
+    old = sorted(x for x in os.listdir(folder) if re.fullmatch(r"snapshot_[0-9]{4}-[0-9]{2}-[0-9]{2}[.]json", x))
+    for x in old[:-BACKUP_KEEP]:
+        try:
+            os.remove(os.path.join(folder, x))
+        except OSError:
+            pass
+    print("  backup kept: " + os.path.join("backups", name) + " (" + str(min(len(old), BACKUP_KEEP)) + " on file)")
+
+
 # ------------------------------------------------------------------ main
 def main():
     ap = argparse.ArgumentParser(description="PVH intel export")
@@ -1689,6 +1781,7 @@ def main():
         print("Pulling from Supabase…")
         snap = pull(cfg)
         json.dump(snap, open(snap_path, "w", encoding="utf-8"))
+        keep_backup(snap, a.out)
     if not os.path.exists(a.data):
         sys.exit("No " + a.data + " -- run the app build first.")
     state = {"snap": snap, "db": json.load(open(a.data, encoding="utf-8")), "out": a.out,

@@ -1746,6 +1746,10 @@ function search(qRaw){
     else if((ns=nameScore(qt,v))>=0) score=ns;
     else if(qa && v._lic && v._lic===qa) score=90;
     else if(qa.length>=5 && v._vin && v._vin.includes(qa)) score=70;
+    /* Part of a plate from its middle or end ("262", "D262"), for when only some of
+       it was caught. It has to include a digit, so a name being typed is not
+       matched against the letters of every plate, and it ranks below a name. */
+    else if(qa.length>=3 && /[0-9]/.test(qa) && v._plate && v._plate.includes(qa)) score=55;
     else if(qa && v._deck && v._deck.startsWith(qa) && qa.length<v._deck.length) score=40;
     if(score>=0) vres.push([score,v]);
   }
