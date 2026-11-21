@@ -1489,7 +1489,7 @@ body.hastasks .hrow{gap:5px}
 .clbtn:active{background:var(--line)}
 /* one row of adds under a record's header: stop, note, task */
 .actrow{display:flex;gap:8px;margin:0 0 14px}
-.actrow .clbtn{flex:1 1 0;padding:0 6px}
+.actrow .clbtn{flex:1 1 0;padding:0 6px;white-space:nowrap}
 .ntbar[onclick]{cursor:pointer}
 .t-Shuttle{background:rgba(63,203,126,.14);color:var(--shuttle)}
 .chev{color:var(--faint);font-size:18px}
@@ -2493,11 +2493,15 @@ function ntCompose(){
     if(t){t.focus(); t.scrollIntoView({behavior:"smooth",block:"center"});}},60);
 }
 function ntComposeCancel(){NT_NEW=false; keepScroll();}
-/* The three adds for a record, in one row under the header. */
+/* The adds for a record, in one row under the header. Link (vehicle and
+   operator pages only) opens its picker right under the row. */
 function actRow(t,i,stopFn){
+  var lk=(t!=="w"&&lkOn())?(LK_OPEN===t+"/"+i):null;
   return '<div class="actrow"><button class="clbtn primary" onclick="'+stopFn+'">Record stop</button>'+
     (shOn()?'<button class="clbtn" onclick="ntCompose()">Add note</button>':'')+
-    ((t!=="w"&&tkOn())?'<button class="clbtn" onclick="tkNew(\''+t+'\','+i+')">Add task</button>':'')+'</div>';
+    ((t!=="w"&&tkOn())?'<button class="clbtn" onclick="tkNew(\''+t+'\','+i+')">Add task</button>':'')+
+    (lk!==null?'<button class="clbtn" onclick="lkOpen(\''+t+'\','+i+')">Link</button>':'')+'</div>'+
+    (lk?lkPicker(t,i):'');
 }
 /* Tasks and notes on a record read as one stream under one heading. */
 function actBlock(t,i,key){
@@ -2680,13 +2684,11 @@ function lkBlock(side,i){
   if(!lkOn())return "";
   lkMaps(); LK_IDS=[];
   var key=lkKey(side,i); if(!key)return "";
-  var ls=lkFor(side,key), open=(LK_OPEN===side+"/"+i);
+  /* The Link button and its picker live in the action row; this box is only
+     the list, and it is left out when nothing is linked. */
+  var ls=lkFor(side,key); if(!ls.length)return "";
   var h='<div class="lkbox"><div class="lkhead"><span class="seclabel" style="margin:0">'+
-    (side==="o"?"Drives · linked by officers":"Seen driven by · linked by officers")+(ls.length?' ('+ls.length+')':'')+'</span>'+
-    (open?'':'<button class="clbtn" onclick="lkOpen(\''+side+'\','+i+')">+ '+
-      (side==="o"?"Link vehicle":"Link operator")+'</button>')+'</div>';
-  if(open)h+=lkPicker(side,i);
-  else if(!ls.length)h+='<div class="empty">'+(side==="o"?"No vehicle linked yet.":"No operator linked yet.")+'</div>';
+    (side==="o"?"Drives · linked by officers":"Seen driven by · linked by officers")+' ('+ls.length+')</span></div>';
   ls.forEach(function(l){
     var other=side==="o"?LKV[l.veh]:LKO[l.op], n=LK_IDS.push(l.id)-1;
     h+=other?(side==="o"?vehCard(other):opCard(other)):
@@ -2710,6 +2712,7 @@ function lkPicker(side,i){
     '<button class="clbtn" onclick="lkClose()">Cancel</button></div>';
 }
 function lkOpen(side,i){
+  if(LK_OPEN===side+"/"+i){lkClose();return;}
   LK_OPEN=side+"/"+i; keepScroll();
   setTimeout(function(){var e=document.getElementById("lkq"); if(e)e.focus();},60);
 }
@@ -3985,8 +3988,8 @@ function renderVehicle(i){
     '</div></details>';
   h+='<button class="copybtn quiet" onclick="copyRec(\'v\','+i+',this)">Copy record summary</button>';
   if(v["Notes"]) h+='<div class="seclabel">Taxi Database notes</div><div class="notes">'+esc(v["Notes"])+'</div>';
-  h+=actBlock("v",i,clKeyV(v));
   h+=lkBlock("v",i);
+  h+=actBlock("v",i,clKeyV(v));
   if(others.length){
     h+='<div class="seclabel">Other vehicles, same owner ('+others.length+')</div>'+others.map(x=>vehCard(x)).join("");
   }
@@ -4035,8 +4038,8 @@ function renderOperator(i){
     '</div></details>';
   h+='<button class="copybtn quiet" onclick="copyRec(\'o\','+i+',this)">Copy record summary</button>';
   if(o["Notes"]) h+='<div class="seclabel">Taxi Database notes</div><div class="notes">'+esc(o["Notes"])+'</div>';
-  h+=actBlock("o",i,clKey(o));
   h+=lkBlock("o",i);
+  h+=actBlock("o",i,clKey(o));
   const veh=(o._veh||[]).map(ix=>V[ix]).filter(Boolean);
   h+='<div class="seclabel">Registered in this name ('+veh.length+')</div>';
   const sn=(o._vsn||[]).map(ix=>V[ix]).filter(Boolean);
